@@ -81,6 +81,17 @@ final class StatusModel: ObservableObject {
     @Published var actionOutput = ""
     @Published var actionRunning = false
     @Published var actionExit: Int32?
+    @Published var actionTruncated = false
+
+    // output arrives on the pipe thread and is flushed to the UI in batches —
+    // per-line @Published updates froze the app on chatty commands (a check
+    // of a large pair emits a line per differing file)
+    private let pendingLock = NSLock()
+    private var pendingLines: [String] = []
+    private var flushTimer: Timer?
+    private var actionProc: Process?
+    private var shownLines: [String] = []
+    private static let maxShownLines = 500
 
     private var timer: Timer?
     private var watcher: DispatchSourceFileSystemObject?
@@ -160,19 +171,55 @@ final class StatusModel: ObservableObject {
     // MARK: - actions
 
     /// Stream a ferry command into the output window state. One at a time.
+    /// The view shows a live tail (last 500 lines); the full record is the
+    /// run log, as ever.
     func runAction(_ title: String, _ args: [String]) {
         guard let bin = ferryBin, !actionRunning else { return }
         actionTitle = title
         actionOutput = ""
         actionExit = nil
         actionRunning = true
-        FerryCLI.stream(bin, args) { [weak self] line in
-            self?.actionOutput += line + "\n"
-        } onExit: { [weak self] code in
-            self?.actionRunning = false
-            self?.actionExit = code
-            self?.refresh()
+        actionTruncated = false
+        shownLines = []
+        pendingLock.lock(); pendingLines = []; pendingLock.unlock()
+
+        flushTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.flushPending() }
         }
+        actionProc = FerryCLI.stream(bin, args) { [weak self] line in
+            guard let self else { return }
+            self.pendingLock.lock()
+            self.pendingLines.append(line)
+            self.pendingLock.unlock()
+        } onExit: { [weak self] code in
+            guard let self else { return }
+            self.flushTimer?.invalidate(); self.flushTimer = nil
+            self.flushPending()
+            self.actionProc = nil
+            self.actionRunning = false
+            self.actionExit = code
+            self.refresh()
+        }
+    }
+
+    private func flushPending() {
+        pendingLock.lock()
+        let fresh = pendingLines
+        pendingLines = []
+        pendingLock.unlock()
+        guard !fresh.isEmpty else { return }
+        shownLines.append(contentsOf: fresh)
+        if shownLines.count > Self.maxShownLines {
+            shownLines.removeFirst(shownLines.count - Self.maxShownLines)
+            actionTruncated = true
+        }
+        actionOutput = shownLines.joined(separator: "\n")
+    }
+
+    /// Stop the running action. check/dry-run are read-only; a stopped sync
+    /// is recovered by --resilient/--recover on the next run.
+    func cancelAction() {
+        actionProc?.terminate()
     }
 
     func syncNow() {

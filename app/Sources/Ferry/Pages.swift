@@ -234,10 +234,21 @@ struct ActionOutput: View {
                               systemImage: code == 0 ? "checkmark.circle.fill" : "xmark.octagon.fill")
                             .foregroundStyle(code == 0 ? .green : .red)
                     }
+                    if model.actionRunning {
+                        Button {
+                            model.cancelAction()
+                        } label: { Label("Stop", systemImage: "stop.fill") }
+                        .tint(.red)
+                    }
                     Button {
                         model.actionOutput = ""; model.actionExit = nil; model.actionTitle = ""
                     } label: { Label("Clear", systemImage: "xmark") }
                     .disabled(model.actionRunning)
+                }
+                if model.actionTruncated {
+                    Text("Showing the last 500 lines — the full record is in the run log (Open Log).")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 ScrollViewReader { proxy in
                     ScrollView {

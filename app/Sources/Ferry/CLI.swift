@@ -80,16 +80,19 @@ enum FerryCLI {
             let chunk = h.availableData
             if chunk.isEmpty { return }
             buffer.append(chunk)
+            // deliver on this pipe thread — a busy command can emit thousands
+            // of lines a second, and dispatching each to main is what froze
+            // the UI; the model batches them instead
             while let nl = buffer.firstIndex(of: 0x0A) {
                 let line = String(data: buffer[..<nl], encoding: .utf8) ?? ""
                 buffer = Data(buffer[buffer.index(after: nl)...])
-                DispatchQueue.main.async { onLine(line) }
+                onLine(line)
             }
         }
         p.terminationHandler = { proc in
             pipe.fileHandleForReading.readabilityHandler = nil
             if let tail = String(data: buffer, encoding: .utf8), !tail.isEmpty {
-                DispatchQueue.main.async { onLine(tail) }
+                onLine(tail)
             }
             DispatchQueue.main.async { onExit(proc.terminationStatus) }
         }
