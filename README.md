@@ -32,6 +32,17 @@ match. `ferry` is the set of decisions that stop that:
 
 ## Install
 
+```sh
+brew install stphung/tap/ferry
+ferry setup
+```
+
+That is the whole thing on a fresh Mac. The formula pulls in `rclone`, and puts the man
+page and shell completions where Homebrew already looks — no `PATH` fiddling.
+
+<details>
+<summary>Installing from source instead</summary>
+
 `ferry` is a single self-contained shell script. It needs `rclone` (≥ 1.66, for
 `--backup-dir1`) at runtime, and nothing else.
 
@@ -51,6 +62,8 @@ make uninstall                           # removes all four files
 ```
 
 For development, `make link` symlinks the script instead of copying it.
+
+</details>
 
 ## Setting up a new machine
 
@@ -173,3 +186,19 @@ make deps           # verify rclone is present and new enough
 make check-version  # VERSION= in ferry must match the man page
 bash -n ferry       # syntax check
 ```
+
+### Releasing
+
+The Homebrew formula points at GitHub's auto-generated tag tarball, so cutting a version
+needs only a pushed tag — no release assets.
+
+```sh
+# 1. bump VERSION= in ferry and the .TH line in doc/ferry.1, then:
+make check-version
+git tag -a v0.2.0 -m "ferry 0.2.0" && git push origin v0.2.0
+
+# 2. bump the formula in stphung/homebrew-tap:
+curl -fsSL https://github.com/stphung/ferry/archive/refs/tags/v0.2.0.tar.gz | shasum -a 256
+```
+
+Update `url` and `sha256` in `Formula/ferry.rb` and commit.
