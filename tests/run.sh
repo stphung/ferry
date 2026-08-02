@@ -931,6 +931,36 @@ teardown
 }
 
 
+# 42. markers --status: report both sides without writing anything — what the
+#     panel's resync flow decides from
+test_42_markers_status() {
+setup
+seed 3
+run markers --status --porcelain
+expect_status "42a status works before placement" 0
+line1=$(printf '%s\n' "$out" | head -1)
+case "$line1" in
+    *"	1	"*) ok "42b path1 marker present (setup seeds it)" ;;
+    *) no "42b path1 marker present (setup seeds it)" "got: $line1" ;;
+esac
+line2=$(printf '%s\n' "$out" | tail -1)
+case "$line2" in
+    *"	0	"*) ok "42c path2 marker absent before placement" ;;
+    *) no "42c path2 marker absent before placement" "got: $line2" ;;
+esac
+expect_no_file "42d nothing was written" "$p2/RCLONE_TEST"
+
+run markers --yes
+run markers --status --porcelain
+line2=$(printf '%s\n' "$out" | tail -1)
+case "$line2" in
+    *"	1	"*) ok "42e path2 marker present after placement" ;;
+    *) no "42e path2 marker present after placement" "got: $line2" ;;
+esac
+teardown
+}
+
+
 # ------------------------------------------------------------------ runner --
 
 all_tests=$(declare -F | awk '{print $3}' | grep '^test_[0-9]' | sort)

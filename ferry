@@ -7,7 +7,7 @@
 
 set -eu
 
-VERSION=0.7.1
+VERSION=0.7.2
 
 # GUI and launchd contexts (Spotlight, Ferry.app, the scheduled sync) start
 # with a minimal PATH that lacks Homebrew — so rclone "isn't installed" and
@@ -691,14 +691,34 @@ cmd_setup() {
 
 cmd_markers() {
 	require_configured
-	local assume=0
+	local assume=0 statusonly=0 porcelain=0
 	while [ $# -gt 0 ]; do
 		case "$1" in
 			--yes) assume=1 ;;
+			--status) statusonly=1 ;;
+			--porcelain) porcelain=1 ;;
 			*) die "markers: unknown option '$1'" ;;
 		esac
 		shift
 	done
+
+	# --status: report without touching anything — the app's resync flow uses
+	# this to know whether the markers phase is needed, and shows the entry
+	# counts that make the safety check meaningful.
+	if [ "$statusonly" = 1 ]; then
+		local sp spresent sn
+		for sp in "$PATH1" "$PATH2"; do
+			if marker_present "$sp"; then spresent=1; else spresent=0; fi
+			sn=$(probe lsf "$sp" --max-depth 1 2>/dev/null | grep -c . || true)
+			if [ "$porcelain" = 1 ]; then
+				printf '%s\t%s\t%s\n' "$sp" "$spresent" "${sn:-0}"
+			else
+				if [ "$spresent" = 1 ]; then ok "$sp — marker present, ${sn:-0} entries"
+				else bad "$sp — marker MISSING, ${sn:-0} entries"; fi
+			fi
+		done
+		return 0
+	fi
 
 	head_ "access markers"
 	local p n

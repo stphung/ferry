@@ -591,6 +591,13 @@ struct ResyncSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var mode = "path1"
     @State private var typed = ""
+    // markers must exist before a resync can run; when they don't, this sheet
+    // walks through placing them instead of letting the resync fail with a
+    // CLI error and no button to fix it
+    @State private var markers: [StatusModel.MarkerSide] = []
+    @State private var markersChecked = false
+    @State private var placing = false
+    @State private var placeError: String?
 
     private let modes: [(String, String)] = [
         ("path1", "the NAS wins — its version overwrites the cloud where they differ"),
@@ -602,11 +609,79 @@ struct ResyncSheet: View {
     ]
     private var consequence: String { modes.first { $0.0 == mode }?.1 ?? "" }
     private var armed: Bool { typed == "resync" && !model.actionRunning }
+    private var markersMissing: Bool { markers.contains { !$0.present } }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label("Re-establish the pair", systemImage: "arrow.triangle.2.circlepath.circle")
                 .font(.headline)
+
+            if !markersChecked {
+                ProgressView("Checking the safety markers…")
+            } else if markersMissing {
+                // phase 1: the markers. Counts shown so an empty side is
+                // visible BEFORE anything trusts it.
+                Text("Before the first resync, ferry places a small marker file on each side. If a side ever mounts empty or unreachable, the missing marker stops a sync from reading it as “everything was deleted”.")
+                    .font(.callout)
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(markers) { m in
+                            HStack {
+                                Image(systemName: m.present ? "checkmark.circle.fill" : "circle.dashed")
+                                    .foregroundStyle(m.present ? .green : .orange)
+                                Text(shortPath(m.path)).font(.body.monospaced())
+                                    .lineLimit(1).truncationMode(.middle).help(m.path)
+                                Spacer()
+                                Text("\(m.entries) entries").foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    .padding(6)
+                }
+                Text("Check the counts look like the sides you expect — a folder that should hold your files but shows 0 entries is the thing to stop for.")
+                    .font(.callout).foregroundStyle(.secondary)
+                if let e = placeError { Text(e).foregroundStyle(.red).font(.callout) }
+                HStack {
+                    Spacer()
+                    Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                    Button {
+                        placing = true; placeError = nil
+                        Task {
+                            guard let bin = model.ferryBin else { placing = false; return }
+                            let r = await Task.detached {
+                                FerryCLI.runWithInput(bin, ["markers", "--yes"], stdin: "")
+                            }.value
+                            placing = false
+                            if r.status != 0 {
+                                placeError = r.err.isEmpty ? "could not place the markers" : r.err
+                            } else {
+                                markers = await model.markersStatus()
+                            }
+                        }
+                    } label: {
+                        Label(placing ? "Placing…" : "Counts Look Right — Place Markers",
+                              systemImage: "checkmark.shield")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(placing)
+                }
+            } else {
+                resyncPhase
+            }
+        }
+        .padding(20)
+        .frame(width: 560)
+        .onAppear {
+            Task {
+                markers = await model.markersStatus()
+                markersChecked = true
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var resyncPhase: some View {
+        Group {
             Text("A resync rebuilds ferry's saved listings. Where the two sides disagree, one wins — permanently. Deletions made since the listings were lost will be undone.")
                 .font(.callout)
             Label("Anything a later sync replaces or deletes is kept in the Attic for \(model.porcelain["attic_keep_days"]) days — decisions here are recoverable, not destructive.",
@@ -638,8 +713,6 @@ struct ResyncSheet: View {
                 Button("Cancel") { dismiss() }
             }
         }
-        .padding(20)
-        .frame(width: 520)
     }
 }
 

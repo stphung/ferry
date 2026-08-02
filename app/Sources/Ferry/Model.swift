@@ -509,6 +509,25 @@ final class StatusModel: ObservableObject {
         return nil
     }
 
+    struct MarkerSide: Identifiable {
+        var id: String { path }
+        let path: String
+        let present: Bool
+        let entries: String
+    }
+
+    func markersStatus() async -> [MarkerSide] {
+        guard let bin = ferryBin ?? FerryCLI.find() else { return [] }
+        let r = await Task.detached(priority: .utility) {
+            FerryCLI.run(bin, ["markers", "--status", "--porcelain"])
+        }.value
+        return r.out.split(separator: "\n").compactMap { line in
+            let f = line.split(separator: "\t").map(String.init)
+            guard f.count == 3 else { return nil }
+            return MarkerSide(path: f[0], present: f[1] == "1", entries: f[2])
+        }
+    }
+
     func mkdir(_ path: String) async -> Bool {
         guard let bin = ferryBin else { return false }
         let r = await Task.detached(priority: .utility) {
