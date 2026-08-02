@@ -961,6 +961,22 @@ teardown
 }
 
 
+# 43. ls: top-level names, dirs marked — what the markers check displays
+test_43_ls() {
+setup
+mkdir -p "$p1/Photos" "$p1/Documents"
+printf 'x\n' > "$p1/note.txt"
+run ls "$p1"
+expect_status "43a ls succeeds" 0
+expect_contains "43b dirs carry their slash" "Photos/" "$out"
+expect_contains "43c files listed plainly" "note.txt" "$out"
+expect_not_contains "43d no recursion" "Photos/2024" "$out"
+run ls
+expect_status "43e path required" 1
+teardown
+}
+
+
 # ------------------------------------------------------------------ runner --
 
 all_tests=$(declare -F | awk '{print $3}' | grep '^test_[0-9]' | sort)

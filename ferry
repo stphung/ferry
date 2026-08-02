@@ -7,7 +7,7 @@
 
 set -eu
 
-VERSION=0.7.2
+VERSION=0.7.3
 
 # GUI and launchd contexts (Spotlight, Ferry.app, the scheduled sync) start
 # with a minimal PATH that lacks Homebrew — so rclone "isn't installed" and
@@ -496,6 +496,15 @@ cmd_browse() {
 	probe lsf "$path" --dirs-only 2>/dev/null | sed 's:/$::'
 }
 
+# Top-level listing, files and folders (folders keep their trailing slash).
+# The markers check shows these NAMES: "does this look like my drive?" is
+# answerable from names in a way it never is from a count.
+cmd_ls() {
+	local path="${1:-}"
+	[ -n "$path" ] || die "ls REMOTE:PATH"
+	probe lsf "$path" --max-depth 1 2>/dev/null | sort
+}
+
 # The wizard's "new folder" — bisync refuses paths that do not exist, so the
 # folder must be creatable from the picker.
 cmd_mkdir() {
@@ -713,8 +722,8 @@ cmd_markers() {
 			if [ "$porcelain" = 1 ]; then
 				printf '%s\t%s\t%s\n' "$sp" "$spresent" "${sn:-0}"
 			else
-				if [ "$spresent" = 1 ]; then ok "$sp — marker present, ${sn:-0} entries"
-				else bad "$sp — marker MISSING, ${sn:-0} entries"; fi
+				if [ "$spresent" = 1 ]; then ok "$sp — marker present, ${sn:-0} top-level items"
+				else bad "$sp — marker MISSING, ${sn:-0} top-level items"; fi
 			fi
 		done
 		return 0
@@ -1740,6 +1749,7 @@ usage() {
 	  ferry remote-delete NAME             refused while the pair uses it
 	  ferry remote-rename OLD NEW          updates PATH1/PATH2/ATTIC references
 	  ferry browse REMOTE:PATH             subdirectories, one per line
+	  ferry ls REMOTE:PATH                 top-level entries (dirs end with /)
 	  ferry mkdir REMOTE:PATH              create a folder
 	  ferry peek REMOTE:PATH               top-level entry count
 	  ferry resync [-n] [--mode path1|path2|newer|older|larger|smaller]
@@ -1791,6 +1801,7 @@ main() {
 		remote-update-smb) cmd_remote_update_smb "$@" ;;
 		remote-rename) cmd_remote_rename "$@" ;;
 		browse)   cmd_browse "$@" ;;
+		ls)       cmd_ls "$@" ;;
 		mkdir)    cmd_mkdir "$@" ;;
 		peek)     cmd_peek "$@" ;;
 		check)    cmd_check "$@" ;;

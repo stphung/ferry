@@ -528,6 +528,16 @@ final class StatusModel: ObservableObject {
         }
     }
 
+    /// Top-level names for a path — the markers check shows these, because
+    /// "does this look like my drive?" is answerable from names, not counts.
+    func topLevel(_ path: String) async -> [String] {
+        guard let bin = ferryBin ?? FerryCLI.find() else { return [] }
+        let r = await Task.detached(priority: .utility) {
+            FerryCLI.run(bin, ["ls", path])
+        }.value
+        return r.out.split(separator: "\n").map(String.init)
+    }
+
     func mkdir(_ path: String) async -> Bool {
         guard let bin = ferryBin else { return false }
         let r = await Task.detached(priority: .utility) {

@@ -598,6 +598,7 @@ struct ResyncSheet: View {
     @State private var markersChecked = false
     @State private var placing = false
     @State private var placeError: String?
+    @State private var listings: [String: [String]] = [:]
 
     private let modes: [(String, String)] = [
         ("path1", "the NAS wins — its version overwrites the cloud where they differ"),
@@ -623,22 +624,35 @@ struct ResyncSheet: View {
                 // visible BEFORE anything trusts it.
                 Text("Before the first resync, ferry places a small marker file on each side. If a side ever mounts empty or unreachable, the missing marker stops a sync from reading it as “everything was deleted”.")
                     .font(.callout)
-                GroupBox {
-                    VStack(alignment: .leading, spacing: 6) {
-                        ForEach(markers) { m in
+                ForEach(markers) { m in
+                    GroupBox {
+                        VStack(alignment: .leading, spacing: 6) {
                             HStack {
                                 Image(systemName: m.present ? "checkmark.circle.fill" : "circle.dashed")
                                     .foregroundStyle(m.present ? .green : .orange)
                                 Text(shortPath(m.path)).font(.body.monospaced())
                                     .lineLimit(1).truncationMode(.middle).help(m.path)
                                 Spacer()
-                                Text("\(m.entries) entries").foregroundStyle(.secondary)
+                                Text("\(m.entries) top-level items")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .help("Folders and files at the top level — not a total file count.")
+                            }
+                            // the names are the real check: you can't misread
+                            // "Photos, Documents…" the way you can a number
+                            if let names = listings[m.path] {
+                                Text(preview(names))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                            } else {
+                                ProgressView().controlSize(.small)
                             }
                         }
+                        .padding(6)
                     }
-                    .padding(6)
                 }
-                Text("Check the counts look like the sides you expect — a folder that should hold your files but shows 0 entries is the thing to stop for.")
+                Text("Do these look like the folders you expect on each side? That's the whole check — a side that should hold your files but lists nothing (or someone else's names) is the thing to stop for. This is NOT a total file count.")
                     .font(.callout).foregroundStyle(.secondary)
                 if let e = placeError { Text(e).foregroundStyle(.red).font(.callout) }
                 HStack {
@@ -675,8 +689,17 @@ struct ResyncSheet: View {
             Task {
                 markers = await model.markersStatus()
                 markersChecked = true
+                for m in markers where listings[m.path] == nil {
+                    listings[m.path] = await model.topLevel(m.path)
+                }
             }
         }
+    }
+
+    private func preview(_ names: [String]) -> String {
+        let shown = names.prefix(9).map { $0.hasSuffix("/") ? "📁 " + String($0.dropLast()) : $0 }
+        let extra = names.count - min(names.count, 9)
+        return shown.joined(separator: "   ") + (extra > 0 ? "   … and \(extra) more" : "")
     }
 
     @ViewBuilder
