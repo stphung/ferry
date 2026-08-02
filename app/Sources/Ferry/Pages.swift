@@ -94,8 +94,20 @@ struct StatusPage: View {
                                       systemImage: "exclamationmark.octagon.fill")
                                     .foregroundStyle(.red)
                             }
-                            Text("Ferry will not retry until you decide which side is truth. Read the log, then use Resync.")
+                            Text("Ferry will not retry until you decide which side is truth.")
                                 .font(.callout)
+                            // "what happened", inline — no leaving the page
+                            DisclosureGroup("What happened") {
+                                ScrollView {
+                                    Text(model.blockedDetail.isEmpty ? "Loading…" : model.blockedDetail)
+                                        .font(.system(.caption, design: .monospaced))
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .textSelection(.enabled)
+                                }
+                                .frame(maxHeight: 160)
+                                .onAppear { model.loadBlockedDetail() }
+                            }
+                            .font(.callout)
                         }
                         .padding(6)
                     }
@@ -178,7 +190,7 @@ struct StatusPage: View {
                             Text("Recent activity")
                                 .font(.headline)
                                 .padding(.bottom, 2)
-                            ForEach(model.activity.prefix(6)) { item in
+                            ForEach(model.activity.prefix(10)) { item in
                                 HStack(spacing: 8) {
                                     Image(systemName: item.symbol)
                                         .foregroundStyle(.secondary)
@@ -368,11 +380,33 @@ struct AtticPage: View {
 struct DoctorPage: View {
     @ObservedObject var model: StatusModel
 
+    /// The checks doctor always runs, shown as pending until results land.
+    static let pendingChecks: [(String, String)] = [
+        ("rclone", "Is rclone installed and new enough?"),
+        ("config", "Does the configuration load?"),
+        ("remotes", "Are both remotes configured?"),
+        ("reachability", "Can both sides be reached?"),
+        ("markers", "Are the safety markers in place?"),
+        ("attic", "Is the attic outside the synced tree?"),
+        ("headroom", "How much cloud space is free?"),
+        ("pair", "Is the pair established?"),
+    ]
+
     var body: some View {
         Group {
-            if model.doctor.isEmpty {
-                ProgressView("Checking every precondition…")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if model.doctorLoading || model.doctor.isEmpty {
+                // the checklist is legible from the first frame: known checks
+                // render as pending and flip when the results land
+                List(DoctorPage.pendingChecks, id: \.0) { check in
+                    HStack(alignment: .top, spacing: 10) {
+                        ProgressView().controlSize(.small).frame(width: 16)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(check.0).font(.caption).foregroundStyle(.secondary)
+                            Text(check.1).foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.vertical, 3)
+                }
             } else {
                 List(model.doctor) { row in
                     HStack(alignment: .top, spacing: 10) {

@@ -70,6 +70,8 @@ final class StatusModel: ObservableObject {
     @Published var attic: [AtticEntry] = []
     @Published var atticLoaded = false
     @Published var doctor: [DoctorRow] = []
+    @Published var doctorLoading = false
+    @Published var blockedDetail = ""
     @Published var ferryBin: String?
     @Published var loginEnabled = SMAppService.mainApp.status == .enabled
     @Published var syncRunning = false
@@ -199,6 +201,7 @@ final class StatusModel: ObservableObject {
     func loadDoctor() {
         guard let bin = ferryBin ?? FerryCLI.find() else { return }
         doctor = []
+        doctorLoading = true
         Task.detached(priority: .utility) {
             let r = FerryCLI.run(bin, ["doctor", "--porcelain"])
             var rows: [DoctorRow] = r.out.split(separator: "\n").compactMap { line in
@@ -212,7 +215,15 @@ final class StatusModel: ObservableObject {
                 ? [DoctorRow(status: "bad", slug: "version",
                              detail: "ferry \(bin) is too old for this app — brew upgrade ferry")]
                 : rows
-            await MainActor.run { self.doctor = final }
+            await MainActor.run { self.doctor = final; self.doctorLoading = false }
+        }
+    }
+
+    func loadBlockedDetail() {
+        guard let bin = ferryBin ?? FerryCLI.find() else { return }
+        Task.detached(priority: .utility) {
+            let r = FerryCLI.run(bin, ["blocked-detail"])
+            await MainActor.run { self.blockedDetail = r.out }
         }
     }
 

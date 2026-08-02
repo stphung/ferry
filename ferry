@@ -7,7 +7,7 @@
 
 set -eu
 
-VERSION=0.5.1
+VERSION=0.5.2
 
 # ---------------------------------------------------------------- defaults --
 #
@@ -1113,6 +1113,24 @@ cmd_resync() {
 	fi
 }
 
+# ------------------------------------------------------------ blocked-detail --
+#
+# The lines that explain a block, extracted from the failed run's log so the
+# app can answer "what happened" inline instead of sending the user to a log
+# file. The log path is recorded in the blocked file itself.
+
+cmd_blocked_detail() {
+	[ -f "$BLOCKED" ] || die "not blocked"
+	local log
+	log=$(sed -n 's/^Log: //p' "$BLOCKED" | head -1)
+	head -4 "$BLOCKED"
+	if [ -n "$log" ] && [ -f "$log" ]; then
+		printf -- '--- from the run log ---\n'
+		grep -E 'ERROR|Safety abort|NOTICE|critical|queued' "$log" | tail -20
+	fi
+	return 0
+}
+
 # ----------------------------------------------------------------- activity --
 #
 # The Dropbox-style feed: per-file events parsed from ferry's own run logs.
@@ -1596,6 +1614,7 @@ main() {
 		status)   cmd_status "$@" ;;
 		doctor)   cmd_doctor "$@" ;;
 		activity) cmd_activity "$@" ;;
+		blocked-detail) cmd_blocked_detail "$@" ;;
 		config-set) cmd_config_set "$@" ;;
 		remotes)  cmd_remotes "$@" ;;
 		remote-create-smb) cmd_remote_create_smb "$@" ;;

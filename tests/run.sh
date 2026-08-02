@@ -560,6 +560,11 @@ expect_contains "25a a tripped rail reports blocked" "state=blocked" "$out"
 expect_contains "25b and the block flag is set" "blocked=1" "$out"
 expect_contains "25c the headline reason is exposed for the app" "blocked_reason=" "$out"
 expect_contains "25d and names the rail" "aborted" "$out"
+
+run blocked-detail
+expect_status "25e blocked-detail works while blocked" 0
+expect_contains "25f it carries the reason" "aborted" "$out"
+expect_contains "25g and the log evidence" "Safety abort" "$out"
 teardown
 }
 
@@ -773,6 +778,9 @@ expect_status "36e resync refuses too" 1
 run doctor --porcelain
 expect_status "36f doctor exits 1" 1
 expect_contains "36g doctor reports the config bad" "bad	config" "$out"
+
+run blocked-detail
+expect_status "36h blocked-detail refuses when not blocked" 1
 teardown
 }
 
