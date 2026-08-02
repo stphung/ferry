@@ -92,6 +92,10 @@ final class StatusModel: ObservableObject {
     private var actionProc: Process?
     private var shownLines: [String] = []
     private static let maxShownLines = 500
+    // the COMPLETE transcript, written as it streams — the view shows a tail,
+    // but a finished check's full diff is something to read end to end
+    @Published var actionLogPath = ""
+    private var actionLogHandle: FileHandle?
 
     private var timer: Timer?
     private var watcher: DispatchSourceFileSystemObject?
@@ -183,6 +187,19 @@ final class StatusModel: ObservableObject {
         shownLines = []
         pendingLock.lock(); pendingLines = []; pendingLock.unlock()
 
+        // full transcript file, in ferry's own log dir so LOG_KEEP prunes it
+        let logDir = porcelain["state_dir"].isEmpty
+            ? "\(NSHomeDirectory())/.local/state/ferry/logs"
+            : "\(porcelain["state_dir"])/logs"
+        try? FileManager.default.createDirectory(atPath: logDir, withIntermediateDirectories: true)
+        let df = DateFormatter(); df.dateFormat = "yyyyMMdd'T'HHmmss"
+        let slug = title.lowercased().replacingOccurrences(
+            of: "[^a-z0-9]+", with: "-", options: .regularExpression)
+        let path = "\(logDir)/\(df.string(from: Date()))-\(slug).log"
+        FileManager.default.createFile(atPath: path, contents: nil)
+        actionLogHandle = FileHandle(forWritingAtPath: path)
+        actionLogPath = actionLogHandle != nil ? path : ""
+
         flushTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.flushPending() }
         }
@@ -191,10 +208,14 @@ final class StatusModel: ObservableObject {
             self.pendingLock.lock()
             self.pendingLines.append(line)
             self.pendingLock.unlock()
+            // single pipe-callback thread; sequential writes are safe here
+            self.actionLogHandle?.write((line + "\n").data(using: .utf8) ?? Data())
         } onExit: { [weak self] code in
             guard let self else { return }
             self.flushTimer?.invalidate(); self.flushTimer = nil
             self.flushPending()
+            try? self.actionLogHandle?.close()
+            self.actionLogHandle = nil
             self.actionProc = nil
             self.actionRunning = false
             self.actionExit = code
@@ -319,6 +340,11 @@ final class StatusModel: ObservableObject {
         let log = porcelain["log"]
         guard !log.isEmpty else { return }
         NSWorkspace.shared.open(URL(fileURLWithPath: log))
+    }
+
+    func openActionLog() {
+        guard !actionLogPath.isEmpty else { return }
+        NSWorkspace.shared.open(URL(fileURLWithPath: actionLogPath))
     }
 
     // MARK: - onboarding primitives (all through ferry; rclone only for the

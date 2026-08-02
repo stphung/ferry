@@ -279,13 +279,18 @@ struct ActionOutput: View {
                         } label: { Label("Stop", systemImage: "stop.fill") }
                         .tint(.red)
                     }
+                    if !model.actionLogPath.isEmpty {
+                        Button {
+                            model.openActionLog()
+                        } label: { Label("Open Full Output", systemImage: "doc.text.magnifyingglass") }
+                    }
                     Button {
                         model.actionOutput = ""; model.actionExit = nil; model.actionTitle = ""
                     } label: { Label("Clear", systemImage: "xmark") }
                     .disabled(model.actionRunning)
                 }
                 if model.actionTruncated {
-                    Text("Showing the last 500 lines — the full record is in the run log (Open Log).")
+                    Text("Showing the last 500 lines — Open Full Output has the complete transcript.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
