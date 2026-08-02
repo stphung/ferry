@@ -105,41 +105,35 @@ ferry doctor       # every precondition, including cloud headroom
 wake, overlapping runs are skipped by the lock, and a failure posts a macOS notification —
 success is silent.
 
-## Menu bar
+## The app
 
 ```sh
 ferry app install
 ```
 
-Installs **Ferry.app** into `~/Applications`: a native menu bar indicator showing the
-symbol for the pair's state plus the age of the last successful sync and what it moved.
-The dropdown carries the detail and the safe actions — sync now, dry run, check, doctor,
-open the latest log — plus a Start-at-Login toggle.
+**Ferry.app** is a Dropbox-style menu bar app. Click the icon for a popover with the
+pair's state, cloud headroom, schedule, quick actions — Sync Now, Dry Run, Doctor — and
+an **activity feed** of recently transferred files, parsed from ferry's own run logs at
+zero extra cost.
 
-The app is a *thin shell over the CLI*. It renders `ferry status --porcelain` and shells
-out to `ferry` for actions; all logic, config and safety rails stay in the one script. It
-never syncs on its own timer — launchd owns the schedule — and never touches the network.
-It watches the state directory, so the icon updates within milliseconds of a sync
-finishing, with a one-minute fallback tick.
+Everything that needs to survive losing focus opens a real window:
 
-State is carried by symbol shape (menu bar labels render monochrome):
+- **Dry Run / Check** — output streams live into a window, not a spinner-then-wall-of-text
+- **Doctor** — every precondition as a green/red checklist
+- **Attic** — browse dated snapshots of deleted files, restore a day with one confirm
+  (restores never overwrite, so they cannot destroy anything)
+- **Resync** — the same ritual as the CLI: both sides shown, the winner's consequence in
+  plain words, and the button stays disabled until you type `resync`
+- **Settings** — schedule, interval, notifications, safety thresholds. Every write goes
+  through `ferry config-set`, so the CLI's validation is the only validation
 
-| state | symbol |
-|---|---|
-| healthy | `⇆` + age and counts |
-| syncing | circular arrows |
-| stale (>2× interval) | clock with a badge |
-| failed | warning triangle |
-| blocked | octagon |
-| not yet established | dashed circle + `setup` |
+The app is a *thin shell over the CLI*: it renders `status`/`activity`/`attic`/`doctor
+--porcelain` and shells out for actions. It never syncs on its own timer — launchd owns
+the schedule — and never touches the network itself. It watches the state directory, so
+the icon updates within milliseconds of a sync finishing.
 
-Two deliberate restraints, same as ever: **resync opens a Terminal** — it decides which
-side is truth and keeps its confirmation — and cloud headroom is shown *as of the last
-sync*, recorded while ferry was already connected.
-
-The app is built from source at install (SwiftPM; every Homebrew user has the CLT), so
-there is no Gatekeeper friction and no signing requirement. Uninstalling ferry removes
-the app and its login registration too.
+Everything the app does is equally scriptable: `ferry activity -n 20`,
+`ferry config-set INTERVAL 7200`, `ferry attic list --porcelain`.
 
 ## Uninstalling
 

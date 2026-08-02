@@ -106,7 +106,7 @@ exists — a local path is a valid side and has no `listremotes` entry.
 Tests override `FERRY_CONFIG`, `FERRY_STATE_DIR` and `FERRY_PLIST` so nothing touches the
 real config, state, or `~/Library/LaunchAgents`.
 
-121 assertions across 29 groups. Groups 9 (max-delete blocks the pair), 12 (check-access
+146 assertions across 33 groups. Groups 9 (max-delete blocks the pair), 12 (check-access
 guards an empty side) and 22 (a commented config value still arms the rail) are the ones
 covering the rails that matter most; if any starts failing, stop and understand why before
 changing anything else. The suite also sandboxes `FERRY_SWIFTBAR_DIR` and
@@ -118,6 +118,15 @@ Group 22 exists because of a real bug: `ferry setup` writes
 the `=` as the value. The rail was silently disarmed by the tool's own output. The parser
 now strips inline comments (only when preceded by whitespace, so paths containing `#`
 survive) and trims padding from both key and value.
+
+## Machine interfaces (what the app consumes)
+
+Single-value surfaces are key=value (`status --porcelain`). List surfaces are
+TAB-separated records, one per line, because their rows repeat:
+`activity` (epoch, action, path), `attic list` (date, bytes),
+`doctor` (ok|bad|info, slug, detail). `config-set KEY VALUE` is the only write
+interface — same whitelist as load_config plus per-key value checks, and the
+attic-overlap rail holds at write time.
 
 ## Ferry.app
 

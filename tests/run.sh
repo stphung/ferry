@@ -659,6 +659,99 @@ teardown
 }
 
 
+# 32. config-set: validated writes — the settings UI must not be able to
+#     disarm a rail with a value the CLI would reject
+test_32_config_set() {
+setup
+run config-set MAX_DELETE 10
+expect_status "32a numeric write succeeds" 0
+expect_contains "32b the file holds the new value" "MAX_DELETE=10" "$(cat "$conf")"
+
+run config-set MAX_DELETE banana
+expect_status "32c non-numeric value rejected" 1
+expect_contains "32d the file still holds 10" "MAX_DELETE=10" "$(cat "$conf")"
+
+run config-set NONSENSE 1
+expect_status "32e unknown key rejected" 1
+
+run config-set NOTIFY 2
+expect_status "32f NOTIFY must be 0 or 1" 1
+
+run config-set ATTIC "$p1/attic-inside"
+expect_status "32g attic inside path1 rejected at write time" 1
+expect_contains "32h and explained" "would sync itself" "$err"
+
+# replacing preserves the rest of the file
+printf '# a comment worth keeping\n' >> "$conf"
+run config-set MAX_DELETE 7
+expect_contains "32i comment survives a rewrite" "a comment worth keeping" "$(cat "$conf")"
+expect_eq "32j exactly one MAX_DELETE line" "1" "$(grep -c '^MAX_DELETE=' "$conf")"
+teardown
+}
+
+# 33. activity: the feed comes from run logs, newest first, machine-readable
+test_33_activity() {
+setup
+seed 3
+establish
+printf 'fresh cloud file\n' > "$p2/from-cloud.txt"
+run sync
+run activity --porcelain
+expect_status "33a activity succeeds" 0
+expect_contains "33b the copied file appears" "from-cloud.txt" "$out"
+first_line=$(printf '%s\n' "$out" | head -1)
+case "$first_line" in
+    [0-9]*'	'*'	'*) ok "33c records are epoch<TAB>action<TAB>path" ;;
+    *) no "33c records are epoch<TAB>action<TAB>path" "got: $first_line" ;;
+esac
+
+run activity --porcelain -n 1
+expect_eq "33d -n limits the record count" "1" "$(printf '%s\n' "$out" | grep -c .)"
+
+run activity -n 0
+expect_status "33e -n 0 is fine and quiet" 0
+teardown
+}
+
+# 34. attic list --porcelain: date and exact bytes, for the app's browser
+test_34_attic_porcelain() {
+setup
+seed 20
+establish
+rm "$p2/f9.txt"
+run sync
+run attic list --porcelain
+expect_status "34a attic list --porcelain succeeds" 0
+expect_contains "34b today's snapshot is listed" "$(date +%Y-%m-%d)" "$out"
+line=$(printf '%s\n' "$out" | head -1)
+case "$line" in
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'	'[0-9]*) ok "34c records are date<TAB>bytes" ;;
+    *) no "34c records are date<TAB>bytes" "got: $line" ;;
+esac
+teardown
+}
+
+# 35. doctor --porcelain: same checks, TSV records, exit still meaningful
+test_35_doctor_porcelain() {
+setup
+seed 3
+establish
+run doctor --porcelain
+expect_status "35a healthy pair exits 0" 0
+expect_eq "35b nothing on stderr" "" "$err"
+expect_contains "35c markers reported ok" "ok	marker" "$out"
+expect_contains "35d attic reported ok" "ok	attic" "$out"
+bad_lines=$(printf '%s\n' "$out" | grep -vcE '^(ok|bad|info)	[a-z]+	' || true)
+expect_eq "35e every record is status<TAB>slug<TAB>detail" "0" "$bad_lines"
+
+rm "$p2/RCLONE_TEST"
+run doctor --porcelain
+expect_status "35f a missing marker exits 1" 1
+expect_contains "35g and is reported bad" "bad	marker" "$out"
+teardown
+}
+
+
 # ------------------------------------------------------------------ runner --
 
 all_tests=$(declare -F | awk '{print $3}' | grep '^test_[0-9]' | sort)

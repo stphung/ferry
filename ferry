@@ -7,7 +7,7 @@
 
 set -eu
 
-VERSION=0.3.1
+VERSION=0.4.0
 
 # ---------------------------------------------------------------- defaults --
 #
@@ -686,6 +686,12 @@ status_porcelain() {
 	printf 'path2=%s\n'       "$PATH2"
 	printf 'age_seconds=%s\n' "$age"
 	printf 'state_dir=%s\n'   "$STATE_DIR"
+	printf 'config_file=%s\n' "$CONFIG_FILE"
+	printf 'attic=%s\n'       "$ATTIC"
+	printf 'max_delete=%s\n'  "$MAX_DELETE"
+	printf 'attic_keep_days=%s\n' "$ATTIC_KEEP_DAYS"
+	printf 'log_keep=%s\n'    "$LOG_KEEP"
+	printf 'notify=%s\n'      "$NOTIFY"
 
 	local k
 	for k in when outcome exit duration copied deleted errors free_bytes used_bytes log; do
@@ -755,82 +761,108 @@ cmd_status() {
 
 # ------------------------------------------------------------------- doctor --
 
+# Doctor output goes through dr() so the same checks serve two audiences:
+# the human report (ok/bad/info as before) and --porcelain for the app,
+# TAB-separated: <ok|bad|info>TAB<slug>TAB<detail>. Lists use TSV rather than
+# key=value because their records repeat; the contract is one record per line.
+DOCTOR_PORCELAIN=0
+
+dr() {
+	# dr <ok|bad|info> <slug> <detail>
+	if [ "$DOCTOR_PORCELAIN" = 1 ]; then
+		printf '%s\t%s\t%s\n' "$1" "$2" "$3"
+	else
+		case "$1" in
+			ok)   ok   "$3" ;;
+			bad)  bad  "$3" ;;
+			info) info "$3" ;;
+		esac
+	fi
+}
+
+dr_head() { [ "$DOCTOR_PORCELAIN" = 1 ] || head_ "$1"; }
+
 cmd_doctor() {
 	local fail=0
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			--porcelain) DOCTOR_PORCELAIN=1 ;;
+			*) die "doctor: unknown option '$1'" ;;
+		esac
+		shift
+	done
 
-	head_ "tools"
+	dr_head "tools"
 	if command -v rclone >/dev/null 2>&1; then
-		ok "rclone $(rclone version 2>/dev/null | head -1 | awk '{print $2}')"
+		dr ok rclone "rclone $(rclone version 2>/dev/null | head -1 | awk '{print $2}')"
 	else
-		bad "rclone not found"; fail=1
+		dr bad rclone "rclone not found"; fail=1
 	fi
 
-	head_ "config"
-	if [ -f "$CONFIG_FILE" ]; then ok "$CONFIG_FILE"; else info "$CONFIG_FILE (absent — using defaults)"; fi
-	info "state   $STATE_DIR"
-	info "workdir $WORKDIR"
+	dr_head "config"
+	if [ -f "$CONFIG_FILE" ]; then dr ok config "$CONFIG_FILE"
+	else dr info config "$CONFIG_FILE (absent — using defaults)"; fi
+	dr info state "$STATE_DIR"
 
-	head_ "remotes"
+	dr_head "remotes"
 	local p
 	for p in "$PATH1" "$PATH2"; do
 		if ! is_remote "$p"; then
-			info "$p (local path, no remote needed)"
+			dr info remote "$p (local path, no remote needed)"
 		elif remote_exists "$p"; then
-			ok "$(remote_of "$p") configured"
+			dr ok remote "$(remote_of "$p") configured"
 		else
-			bad "$(remote_of "$p") not in 'rclone listremotes'"; fail=1
+			dr bad remote "$(remote_of "$p") not in 'rclone listremotes'"; fail=1
 		fi
 	done
 
-	head_ "reachability"
+	dr_head "reachability"
 	for p in "$PATH1" "$PATH2"; do
-		if path_reachable "$p"; then ok "$p"
-		else bad "$p unreachable"; fail=1; fi
+		if path_reachable "$p"; then dr ok reach "$p"
+		else dr bad reach "$p unreachable"; fail=1; fi
 	done
 
-	head_ "access markers (--check-access)"
+	dr_head "access markers (--check-access)"
 	for p in "$PATH1" "$PATH2"; do
 		if marker_present "$p"; then
-			ok "$p/$CHECK_FILENAME"
+			dr ok marker "$p/$CHECK_FILENAME"
 		else
-			bad "$p/$CHECK_FILENAME missing"
-			info "   without it, an empty or unreachable side reads as 'user deleted everything'"
+			dr bad marker "$p/$CHECK_FILENAME missing — without it, an empty side reads as 'deleted everything'"
 			fail=1
 		fi
 	done
 
-	head_ "attic"
+	dr_head "attic"
 	if attic_overlaps; then
-		bad "$ATTIC is inside $PATH1 — it would sync itself to the cloud"; fail=1
+		dr bad attic "$ATTIC is inside $PATH1 — it would sync itself to the cloud"; fail=1
 	else
-		ok "$ATTIC does not overlap $PATH1"
+		dr ok attic "$ATTIC does not overlap $PATH1"
 	fi
 
-	head_ "headroom"
+	dr_head "headroom"
 	local about
 	if about=$(rclone about "$(remote_of "$PATH2")" 2>/dev/null); then
 		local free used
 		free=$(printf '%s' "$about" | awk '/^Free:/{print $2, $3}')
 		used=$(printf '%s' "$about" | awk '/^Used:/{print $2, $3}')
-		info "$(remote_of "$PATH2") used $used, free $free"
-		info "anything you move into $PATH1 must fit in that free space"
+		dr info headroom "$(remote_of "$PATH2") used $used, free $free"
 	else
-		info "$(remote_of "$PATH2") does not report quota"
+		dr info headroom "$(remote_of "$PATH2") does not report quota"
 	fi
 
-	head_ "pair"
-	if resync_done; then ok "established"
-	else warn "not established — 'ferry resync' before the first 'ferry sync'"; fi
-	[ -f "$BLOCKED" ] && { bad "BLOCKED — see 'ferry status'"; fail=1; }
+	dr_head "pair"
+	if resync_done; then dr ok pair "established"
+	else dr info pair "not established — 'ferry resync' before the first 'ferry sync'"; fi
+	[ -f "$BLOCKED" ] && { dr bad blocked "BLOCKED — see 'ferry status'"; fail=1; }
 
-	printf '\n' >&2
+	[ "$DOCTOR_PORCELAIN" = 1 ] || printf '\n' >&2
 	if [ "$fail" != 0 ]; then
 		# A return, not a die: `ferry setup` runs doctor before the markers
 		# exist, so a failure there is expected and must not abort setup.
-		bad "doctor found problems"
+		[ "$DOCTOR_PORCELAIN" = 1 ] || bad "doctor found problems"
 		return 1
 	fi
-	ok "ready"
+	[ "$DOCTOR_PORCELAIN" = 1 ] || ok "ready"
 }
 
 # -------------------------------------------------------------------- check --
@@ -938,18 +970,146 @@ cmd_resync() {
 	fi
 }
 
+# ----------------------------------------------------------------- activity --
+#
+# The Dropbox-style feed: per-file events parsed from ferry's own run logs.
+# rclone already records every transfer as
+#   YYYY/MM/DD HH:MM:SS INFO  : <path>: <Action>
+# so the feed costs nothing at sync time and nothing over the network.
+# --porcelain emits TSV: <epoch>TAB<action>TAB<path>, newest first.
+
+cmd_activity() {
+	local porcelain=0 limit=50
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			--porcelain) porcelain=1 ;;
+			-n) shift; limit="${1:-50}" ;;
+			*) die "activity: unknown option '$1'" ;;
+		esac
+		shift
+	done
+	case "$limit" in
+		''|*[!0-9]*) die "activity: -n needs a number" ;;
+	esac
+
+	local count=0 log line stamp path action epoch
+	# newest log first, newest line first within each (tail -r is macOS/BSD)
+	for log in $(ls -1 "$LOG_DIR"/*.log 2>/dev/null | sort -r); do
+		[ "$count" -ge "$limit" ] && break
+		while IFS= read -r line; do
+			[ "$count" -ge "$limit" ] && break
+			case "$line" in
+				*" INFO  : "*": "*) ;;
+				*) continue ;;
+			esac
+			stamp=${line%% INFO*}
+			path=${line#* INFO  : }
+			action=${path##*: }
+			path=${path%: *}
+			# only real file events; rclone's narration lines have no path
+			case "$action" in
+				"Copied (new)"|"Copied (replaced existing)"|"Copied (server-side copy)"|\
+				"Deleted"|"Moved into"*|"Moved (server-side)"|"Renamed"*|"Updated modification time"*) ;;
+				*) continue ;;
+			esac
+			epoch=$(date -j -f "%Y/%m/%d %H:%M:%S" "$stamp" +%s 2>/dev/null) || continue
+			if [ "$porcelain" = 1 ]; then
+				printf '%s\t%s\t%s\n' "$epoch" "$action" "$path"
+			else
+				printf '  %s  %-24s  %s\n' "$(date -r "$epoch" '+%b %d %H:%M')" "$action" "$path" >&2
+			fi
+			count=$((count + 1))
+		done <<-ACTIVITY_EOF
+			$(tail -r "$log" 2>/dev/null | head -500)
+		ACTIVITY_EOF
+	done
+	[ "$count" -gt 0 ] || { [ "$porcelain" = 1 ] || info "(no activity recorded yet)"; }
+	return 0
+}
+
+# --------------------------------------------------------------- config-set --
+#
+# Validated single-key writes, for the app's settings window. The same
+# whitelist as load_config, plus per-key value checks — the settings UI must
+# not be able to disarm a rail with a value the CLI would reject.
+
+cmd_config_set() {
+	local key="${1:-}" val="${2:-}"
+	[ -n "$key" ] || die "config-set KEY VALUE"
+	[ $# -ge 2 ] || die "config-set $key: missing value"
+
+	case "$key" in
+		PATH1|PATH2|ATTIC|CHECK_FILENAME|STATE_DIR)
+			[ -n "$val" ] || die "config-set $key: value must not be empty" ;;
+		MAX_DELETE|TRANSFERS|CHECKERS|TPSLIMIT|RETRIES|LOW_LEVEL_RETRIES|\
+		INTERVAL|LOG_KEEP|ATTIC_KEEP_DAYS)
+			case "$val" in
+				''|*[!0-9]*) die "config-set $key: value must be a whole number" ;;
+			esac ;;
+		NOTIFY)
+			case "$val" in
+				0|1) ;;
+				*) die "config-set NOTIFY: value must be 0 or 1" ;;
+			esac ;;
+		*)
+			die "config-set: unknown setting '$key'" ;;
+	esac
+
+	# the attic rail holds at write time, not just at run time
+	if [ "$key" = ATTIC ]; then
+		local saved="$ATTIC"
+		ATTIC="$val"
+		if attic_overlaps; then
+			ATTIC="$saved"
+			die "config-set ATTIC: $val is inside $PATH1 — it would sync itself"
+		fi
+		ATTIC="$saved"
+	fi
+	if [ "$key" = PATH1 ]; then
+		local saved="$PATH1"
+		PATH1="$val"
+		if attic_overlaps; then
+			PATH1="$saved"
+			die "config-set PATH1: the attic ($ATTIC) would be inside $val"
+		fi
+		PATH1="$saved"
+	fi
+
+	mkdir -p "$(dirname "$CONFIG_FILE")"
+	[ -f "$CONFIG_FILE" ] || : > "$CONFIG_FILE"
+	if grep -q "^[[:space:]]*${key}[[:space:]]*=" "$CONFIG_FILE"; then
+		# replace in place, preserving everything else including comments
+		local tmp="$CONFIG_FILE.tmp.$$"
+		sed "s|^[[:space:]]*${key}[[:space:]]*=.*|${key}=${val}|" "$CONFIG_FILE" > "$tmp"
+		mv "$tmp" "$CONFIG_FILE"
+	else
+		printf '%s=%s\n' "$key" "$val" >> "$CONFIG_FILE"
+	fi
+	ok "$key=$val"
+}
+
 # -------------------------------------------------------------------- attic --
 
 cmd_attic() {
 	local sub="${1:-list}"
 	[ $# -gt 0 ] && shift
+	local porcelain=0
+	case "${1:-}" in
+		--porcelain) porcelain=1; shift ;;
+	esac
 	case "$sub" in
 		list)
-			info "$ATTIC"
-			rclone lsf "$ATTIC" --dirs-only 2>/dev/null | sed 's:/$::' | sort | while IFS= read -r d; do
+			[ "$porcelain" = 1 ] || info "$ATTIC"
+			rclone lsf "$ATTIC" --dirs-only 2>/dev/null | sed 's:/$::' | sort -r | while IFS= read -r d; do
 				[ -n "$d" ] || continue
-				printf '  %s  %s\n' "$d" "$(rclone size "$ATTIC/$d" --json 2>/dev/null \
-					| sed -n 's/.*"bytes":\([0-9]*\).*/\1/p' | awk '{printf "%.1f MB", $1/1048576}')" >&2
+				local bytes
+				bytes=$(rclone size "$ATTIC/$d" --json 2>/dev/null \
+					| sed -n 's/.*"bytes":\([0-9]*\).*/\1/p')
+				if [ "$porcelain" = 1 ]; then
+					printf '%s\t%s\n' "$d" "${bytes:-0}"
+				else
+					printf '  %s  %s\n' "$d" "$(printf '%s' "${bytes:-0}" | awk '{printf "%.1f MB", $1/1048576}')" >&2
+				fi
 			done
 			;;
 		restore)
@@ -1244,6 +1404,10 @@ usage() {
 	  ferry status [--porcelain]
 	                            last run, pair health, whether it is blocked
 	                            --porcelain gives key=value on stdout
+	  ferry activity [-n N] [--porcelain]
+	                            recent per-file transfers, from the run logs
+	  ferry config-set KEY VALUE
+	                            validated single-setting write (used by the app)
 	  ferry resync [-n] [--mode path1|path2|newer|older|larger|smaller]
 	                            establish or re-establish the pair (interactive)
 	  ferry attic list|restore DATE [DEST]|prune
@@ -1281,6 +1445,8 @@ main() {
 		markers)  cmd_markers "$@" ;;
 		status)   cmd_status "$@" ;;
 		doctor)   cmd_doctor "$@" ;;
+		activity) cmd_activity "$@" ;;
+		config-set) cmd_config_set "$@" ;;
 		check)    cmd_check "$@" ;;
 		resync)   cmd_resync "$@" ;;
 		attic)    cmd_attic "$@" ;;

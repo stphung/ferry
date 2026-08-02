@@ -1,4 +1,4 @@
-.TH FERRY 1 "2026-08-01" "ferry 0.3.1" "User Commands"
+.TH FERRY 1 "2026-08-01" "ferry 0.4.0" "User Commands"
 .SH NAME
 ferry \- keep a NAS folder and OneDrive as a two-way mirror, safely
 .SH SYNOPSIS
@@ -110,6 +110,20 @@ be re-established by a full resync, resurrecting any deletion made in the
 meantime. It refuses to run without a terminal unless
 .B \-\-yes
 is passed.
+.TP
+.BI activity " [\-n " N "] [\-\-porcelain]"
+Recent per-file transfers, parsed from the run logs \(em nothing is recorded
+beyond what rclone already logs. Newest first, default 50.
+.B \-\-porcelain
+emits TAB-separated records:
+.IR epoch ", " action ", " path .
+.TP
+.BI config\-set " KEY VALUE"
+Write one setting to the config file, validated exactly as
+.B ferry
+itself would validate it \(em unknown keys, non-numeric values for numeric
+keys, and an attic inside the synced tree are all rejected. Used by
+Ferry.app's settings window; equally usable from scripts.
 .SH CONFIGURATION
 .B ferry
 reads

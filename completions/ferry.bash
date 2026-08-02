@@ -4,7 +4,7 @@ _ferry() {
     local cur prev cmds
     cur=${COMP_WORDS[COMP_CWORD]}
     prev=${COMP_WORDS[COMP_CWORD-1]}
-    cmds="setup markers doctor check sync status resync attic schedule app uninstall"
+    cmds="setup markers doctor check sync status resync attic schedule app activity config-set uninstall"
 
     if [ "$COMP_CWORD" -eq 1 ]; then
         mapfile -t COMPREPLY < <(compgen -W "$cmds --help --version" -- "$cur")
@@ -25,6 +25,9 @@ _ferry() {
         schedule) mapfile -t COMPREPLY < <(compgen -W "install remove status" -- "$cur") ;;
         app)      mapfile -t COMPREPLY < <(compgen -W "install remove status" -- "$cur") ;;
         status)   mapfile -t COMPREPLY < <(compgen -W "--porcelain" -- "$cur") ;;
+        activity) mapfile -t COMPREPLY < <(compgen -W "-n --porcelain" -- "$cur") ;;
+        doctor)   mapfile -t COMPREPLY < <(compgen -W "--porcelain" -- "$cur") ;;
+        config-set) mapfile -t COMPREPLY < <(compgen -W "PATH1 PATH2 ATTIC MAX_DELETE TRANSFERS CHECKERS TPSLIMIT RETRIES LOW_LEVEL_RETRIES INTERVAL LOG_KEEP ATTIC_KEEP_DAYS NOTIFY" -- "$cur") ;;
         uninstall) mapfile -t COMPREPLY < <(compgen -W "--purge --yes" -- "$cur") ;;
     esac
 }

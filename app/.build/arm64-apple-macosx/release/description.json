@@ -24,7 +24,27 @@
       "inputs" : [
         {
           "kind" : "file",
+          "name" : "/Users/stphung/workspace/ferry/app/Sources/Ferry/CLI.swift"
+        },
+        {
+          "kind" : "file",
           "name" : "/Users/stphung/workspace/ferry/app/Sources/Ferry/FerryApp.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/stphung/workspace/ferry/app/Sources/Ferry/Model.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/stphung/workspace/ferry/app/Sources/Ferry/PopoverView.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/stphung/workspace/ferry/app/Sources/Ferry/SettingsView.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/stphung/workspace/ferry/app/Sources/Ferry/Windows.swift"
         },
         {
           "kind" : "file",
@@ -39,7 +59,12 @@
       "moduleName" : "Ferry",
       "moduleOutputPath" : "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Modules/Ferry.swiftmodule",
       "objects" : [
-        "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/FerryApp.swift.o"
+        "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/CLI.swift.o",
+        "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/FerryApp.swift.o",
+        "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/Model.swift.o",
+        "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/PopoverView.swift.o",
+        "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/SettingsView.swift.o",
+        "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/Windows.swift.o"
       ],
       "otherArguments" : [
         "-target",
@@ -59,7 +84,6 @@
         "-entry-point-function-name",
         "-Xfrontend",
         "Ferry_main",
-        "-parse-as-library",
         "-swift-version",
         "5",
         "-I",
@@ -86,7 +110,27 @@
       "outputs" : [
         {
           "kind" : "file",
+          "name" : "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/CLI.swift.o"
+        },
+        {
+          "kind" : "file",
           "name" : "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/FerryApp.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/Model.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/PopoverView.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/SettingsView.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/Windows.swift.o"
         },
         {
           "kind" : "file",
@@ -95,7 +139,12 @@
       ],
       "prepareForIndexing" : false,
       "sources" : [
-        "/Users/stphung/workspace/ferry/app/Sources/Ferry/FerryApp.swift"
+        "/Users/stphung/workspace/ferry/app/Sources/Ferry/CLI.swift",
+        "/Users/stphung/workspace/ferry/app/Sources/Ferry/FerryApp.swift",
+        "/Users/stphung/workspace/ferry/app/Sources/Ferry/Model.swift",
+        "/Users/stphung/workspace/ferry/app/Sources/Ferry/PopoverView.swift",
+        "/Users/stphung/workspace/ferry/app/Sources/Ferry/SettingsView.swift",
+        "/Users/stphung/workspace/ferry/app/Sources/Ferry/Windows.swift"
       ],
       "tempsPath" : "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build",
       "wholeModuleOptimization" : true
@@ -112,7 +161,12 @@
       "-package-name",
       "app",
       "-c",
+      "/Users/stphung/workspace/ferry/app/Sources/Ferry/CLI.swift",
       "/Users/stphung/workspace/ferry/app/Sources/Ferry/FerryApp.swift",
+      "/Users/stphung/workspace/ferry/app/Sources/Ferry/Model.swift",
+      "/Users/stphung/workspace/ferry/app/Sources/Ferry/PopoverView.swift",
+      "/Users/stphung/workspace/ferry/app/Sources/Ferry/SettingsView.swift",
+      "/Users/stphung/workspace/ferry/app/Sources/Ferry/Windows.swift",
       "-I",
       "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Modules",
       "-target",
@@ -132,7 +186,6 @@
       "-entry-point-function-name",
       "-Xfrontend",
       "Ferry_main",
-      "-parse-as-library",
       "-swift-version",
       "5",
       "-I",
@@ -184,7 +237,27 @@
         },
         {
           "kind" : "file",
+          "name" : "/Users/stphung/workspace/ferry/app/Sources/Ferry/CLI.swift"
+        },
+        {
+          "kind" : "file",
           "name" : "/Users/stphung/workspace/ferry/app/Sources/Ferry/FerryApp.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/stphung/workspace/ferry/app/Sources/Ferry/Model.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/stphung/workspace/ferry/app/Sources/Ferry/PopoverView.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/stphung/workspace/ferry/app/Sources/Ferry/SettingsView.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/stphung/workspace/ferry/app/Sources/Ferry/Windows.swift"
         }
       ],
       "outputFilePath" : "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/sources"
@@ -198,7 +271,27 @@
         },
         {
           "kind" : "file",
+          "name" : "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/CLI.swift.o"
+        },
+        {
+          "kind" : "file",
           "name" : "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/FerryApp.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/Model.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/PopoverView.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/SettingsView.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/Windows.swift.o"
         }
       ],
       "outputFilePath" : "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.product/Objects.LinkFileList"

@@ -13,6 +13,8 @@ _ferry() {
         'attic:list, restore or prune deleted files'
         'schedule:install, remove or inspect the launchd job'
         'app:install, remove or inspect the Ferry.app indicator'
+        'activity:recent per-file transfers from the run logs'
+        'config-set:validated single-setting write'
         'uninstall:remove the launchd agent and menu bar plugin'
     )
 

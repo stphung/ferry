@@ -4,10 +4,40 @@
     "object": "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/Ferry.o",
     "swift-dependencies": "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/primary.swiftdeps"
   },
+  "/Users/stphung/workspace/ferry/app/Sources/Ferry/CLI.swift": {
+    "object": "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/CLI.swift.o",
+    "swiftmodule": "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/CLI~partial.swiftmodule",
+    "swift-dependencies": "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/CLI.swiftdeps",
+    "diagnostics": "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/CLI.dia"
+  },
   "/Users/stphung/workspace/ferry/app/Sources/Ferry/FerryApp.swift": {
     "object": "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/FerryApp.swift.o",
     "swiftmodule": "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/FerryApp~partial.swiftmodule",
     "swift-dependencies": "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/FerryApp.swiftdeps",
     "diagnostics": "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/FerryApp.dia"
+  },
+  "/Users/stphung/workspace/ferry/app/Sources/Ferry/Model.swift": {
+    "object": "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/Model.swift.o",
+    "swiftmodule": "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/Model~partial.swiftmodule",
+    "swift-dependencies": "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/Model.swiftdeps",
+    "diagnostics": "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/Model.dia"
+  },
+  "/Users/stphung/workspace/ferry/app/Sources/Ferry/PopoverView.swift": {
+    "object": "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/PopoverView.swift.o",
+    "swiftmodule": "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/PopoverView~partial.swiftmodule",
+    "swift-dependencies": "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/PopoverView.swiftdeps",
+    "diagnostics": "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/PopoverView.dia"
+  },
+  "/Users/stphung/workspace/ferry/app/Sources/Ferry/SettingsView.swift": {
+    "object": "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/SettingsView.swift.o",
+    "swiftmodule": "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/SettingsView~partial.swiftmodule",
+    "swift-dependencies": "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/SettingsView.swiftdeps",
+    "diagnostics": "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/SettingsView.dia"
+  },
+  "/Users/stphung/workspace/ferry/app/Sources/Ferry/Windows.swift": {
+    "object": "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/Windows.swift.o",
+    "swiftmodule": "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/Windows~partial.swiftmodule",
+    "swift-dependencies": "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/Windows.swiftdeps",
+    "diagnostics": "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/Windows.dia"
   }
 }
