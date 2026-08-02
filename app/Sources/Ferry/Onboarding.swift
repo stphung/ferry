@@ -757,3 +757,112 @@ struct ResyncStep: View {
         .frame(maxWidth: 560)
     }
 }
+
+
+// MARK: - reconfiguring the pair from the main panel
+//
+// The wizard is first-run only; changing a side afterwards happens here, on
+// Status. Same components, one consequence stated up front: a changed side
+// un-establishes the pair, and Status walks you into the resync.
+
+struct PairEditorSheet: View {
+    @ObservedObject var model: StatusModel
+    let kind: RemotePicker.Kind
+    let done: () -> Void
+
+    @State private var step = 0
+    @State private var remote = ""
+    @State private var folder = ""
+    @State private var applying = false
+    @State private var error: String?
+
+    private var established: Bool { model.porcelain["established"] == "1" }
+    private var key: String { kind == .nas ? "PATH1" : "PATH2" }
+    private var title: String { kind == .nas ? "Change the NAS side" : "Change the cloud side" }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title).font(.headline)
+            if established {
+                Label("Changing this un-establishes the pair. Nothing is deleted — you'll run Resync afterwards to build a fresh baseline of both sides.",
+                      systemImage: "exclamationmark.triangle")
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+            }
+
+            if step == 0 {
+                RemotePicker(model: model, kind: kind, chosen: $remote,
+                             onNext: { step = 1 })
+            } else {
+                FolderPicker(model: model, remote: remote, folder: $folder,
+                             hint: kind == .nas
+                                ? "The folder on the NAS that mirrors the cloud."
+                                : "The cloud folder to mirror — leave empty for the whole drive.",
+                             allowEmpty: kind == .cloud) {
+                    applying = true
+                    Task {
+                        let value = kind == .cloud && folder.isEmpty
+                            ? "\(remote):" : "\(remote):\(folder)"
+                        if let e = await model.configSetChecked(key, value) {
+                            error = e; applying = false
+                        } else {
+                            done()
+                        }
+                    }
+                }
+            }
+
+            if let e = error { Text(e).foregroundStyle(.red).font(.callout) }
+
+            HStack {
+                if step == 1 {
+                    Button { step = 0 } label: { Label("Back", systemImage: "chevron.left") }
+                }
+                Spacer()
+                Button("Cancel") { done() }
+                    .keyboardShortcut(.cancelAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 620, height: 560)
+        .disabled(applying)
+    }
+}
+
+struct AtticEditorSheet: View {
+    @ObservedObject var model: StatusModel
+    let done: () -> Void
+    @State private var value = ""
+    @State private var error: String?
+    @State private var applying = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Change the attic").font(.headline)
+            Text("Where files deleted or overwritten by a sync are kept. Must be outside the mirrored folder — ferry refuses an attic that would sync itself.")
+                .font(.callout).foregroundStyle(.secondary)
+            TextField("Attic", text: $value, prompt: Text("nas-remote:ferry-attic"))
+                .textFieldStyle(.roundedBorder)
+                .font(.body.monospaced())
+            if let e = error { Text(e).foregroundStyle(.red).font(.callout) }
+            HStack {
+                Spacer()
+                Button("Cancel") { done() }.keyboardShortcut(.cancelAction)
+                Button {
+                    applying = true
+                    Task {
+                        if let e = await model.configSetChecked("ATTIC", value) {
+                            error = e; applying = false
+                        } else { done() }
+                    }
+                } label: { Label("Save", systemImage: "checkmark") }
+                .keyboardShortcut(.defaultAction)
+                .buttonStyle(.borderedProminent)
+                .disabled(value.isEmpty || applying)
+            }
+        }
+        .padding(20)
+        .frame(width: 480)
+        .onAppear { value = model.porcelain["attic"] }
+    }
+}

@@ -16,6 +16,12 @@ struct StatusPage: View {
     @ObservedObject var model: StatusModel
     @State private var showResync = false
 
+    enum PairSheet: String, Identifiable {
+        case nas, cloud, attic
+        var id: String { rawValue }
+    }
+    @State private var pairSheet: PairSheet?
+
     private var stateLine: (text: String, color: Color) {
         switch model.state {
         case "ok":            return ("Up to date", .green)
@@ -57,28 +63,54 @@ struct StatusPage: View {
                                 .strokeBorder(stateLine.color.opacity(0.35))))
                 )
 
-                // the pair
+                // the pair IS the configuration — shown and changed here
                 GroupBox {
-                    VStack(alignment: .leading, spacing: 6) {
-                        LabeledContent("NAS") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("NAS").frame(width: 70, alignment: .leading)
+                                .foregroundStyle(.secondary)
                             Text(shortPath(model.porcelain["path1"])).font(.body.monospaced())
                                 .lineLimit(1).truncationMode(.middle)
                                 .help(model.porcelain["path1"])
+                            Spacer()
+                            Button { pairSheet = .nas } label: {
+                                Label("Change…", systemImage: "pencil")
+                            }.controlSize(.small)
                         }
-                        LabeledContent("Cloud") {
+                        HStack {
+                            Text("Cloud").frame(width: 70, alignment: .leading)
+                                .foregroundStyle(.secondary)
                             Text(shortPath(model.porcelain["path2"])).font(.body.monospaced())
                                 .lineLimit(1).truncationMode(.middle)
                                 .help(model.porcelain["path2"])
+                            Spacer()
+                            Button { pairSheet = .cloud } label: {
+                                Label("Change…", systemImage: "pencil")
+                            }.controlSize(.small)
                         }
-                        if !model.porcelain["free_bytes"].isEmpty {
-                            LabeledContent("Cloud free") {
-                                Text("\(Fmt.bytes(model.porcelain["free_bytes"]))  (as of last sync)")
-                            }
+                        HStack {
+                            Text("Attic").frame(width: 70, alignment: .leading)
+                                .foregroundStyle(.secondary)
+                            Text(shortPath(model.porcelain["attic"])).font(.body.monospaced())
+                                .lineLimit(1).truncationMode(.middle)
+                                .help(model.porcelain["attic"])
+                            Spacer()
+                            Button { pairSheet = .attic } label: {
+                                Label("Change…", systemImage: "pencil")
+                            }.controlSize(.small)
                         }
-                        LabeledContent("Schedule") {
+                        Divider()
+                        HStack {
+                            Text("Schedule").frame(width: 70, alignment: .leading)
+                                .foregroundStyle(.secondary)
                             Text(model.porcelain["schedule"] == "loaded"
                                  ? "every \(Fmt.age(model.porcelain["interval"]))"
                                  : "off — enable in Settings")
+                            Spacer()
+                            if !model.porcelain["free_bytes"].isEmpty {
+                                Text("\(Fmt.bytes(model.porcelain["free_bytes"])) free in cloud")
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                     }
                     .padding(6)
@@ -214,6 +246,13 @@ struct StatusPage: View {
             .padding(20)
         }
         .sheet(isPresented: $showResync) { ResyncSheet(model: model) }
+        .sheet(item: $pairSheet) { which in
+            switch which {
+            case .nas:   PairEditorSheet(model: model, kind: .nas)   { pairSheet = nil }
+            case .cloud: PairEditorSheet(model: model, kind: .cloud) { pairSheet = nil }
+            case .attic: AtticEditorSheet(model: model)              { pairSheet = nil }
+            }
+        }
     }
 }
 
@@ -468,7 +507,7 @@ struct SettingsPage: View {
                     Text(model.porcelain["attic"]).font(.caption.monospaced())
                         .lineLimit(1).truncationMode(.middle).help(model.porcelain["attic"])
                 }
-                Text("Changing paths mid-pair forces a resync, so they are edited by re-running onboarding (ferry setup), not here.")
+                Text("Change the pair from the Status page — each side has a Change… button there. A changed side un-establishes the pair and Status walks you into the resync.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Schedule") {

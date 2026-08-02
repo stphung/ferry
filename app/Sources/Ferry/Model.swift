@@ -274,6 +274,18 @@ final class StatusModel: ObservableObject {
         }
     }
 
+    /// config-set with the CLI's verdict surfaced — pair edits need to show
+    /// a rejection (attic overlap, empty value) instead of failing silently.
+    func configSetChecked(_ key: String, _ value: String) async -> String? {
+        guard let bin = ferryBin ?? FerryCLI.find() else { return "ferry not found" }
+        let r = await Task.detached(priority: .utility) {
+            FerryCLI.runWithInput(bin, ["config-set", key, value], stdin: "")
+        }.value
+        if r.status != 0 { return r.err.isEmpty ? "value rejected" : r.err }
+        await MainActor.run { self.refresh() }
+        return nil
+    }
+
     /// Settings writes go through config-set so the CLI's validation holds —
     /// the UI cannot disarm a rail with a value ferry would reject.
     func configSet(_ key: String, _ value: String, then: (() -> Void)? = nil) {
