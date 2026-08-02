@@ -13,7 +13,7 @@ ZSHDIR   = $(DESTDIR)$(PREFIX)/share/zsh/site-functions
 BASHDIR  = $(DESTDIR)$(PREFIX)/share/bash-completion/completions
 
 .DEFAULT_GOAL := help
-.PHONY: help install uninstall link unlink test list-tests lint deps check-version dist
+.PHONY: help install uninstall link unlink test list-tests lint lint-tools deps check-version dist hooks unhooks
 
 T ?=
 
@@ -53,10 +53,49 @@ test: ## Run the suite; T="5 9" runs groups, T="-k conflict" filters by name
 list-tests: ## List the test groups
 	@./tests/run.sh -l
 
-lint: ## shellcheck ferry and the suite (skips cleanly if not installed)
-	@command -v shellcheck >/dev/null 2>&1 \
-		|| { printf 'shellcheck not installed, skipping\n'; exit 0; }
-	shellcheck ferry tests/run.sh
+SHELL_FILES = ferry tests/run.sh
+
+# One entry point for static analysis, run byte-identically here and in CI.
+# Suppressions live in .shellcheckrc, not on this command line, so there is
+# nothing to keep in sync between the two.
+#
+# A missing tool is an ERROR, not a skip. A linter that quietly does nothing is
+# worse than no linter: CI stays green while checking less than you think.
+# Use `make lint SKIP_MISSING=1` to downgrade that to a warning.
+lint: ## Static analysis — bash -n, shellcheck, actionlint (what CI runs)
+	@fail=0; \
+	for f in $(SHELL_FILES); do bash -n "$$f" || fail=1; done; \
+	printf '  ok       bash -n (%s)\n' '$(SHELL_FILES)'; \
+	if command -v shellcheck >/dev/null 2>&1; then \
+		if shellcheck $(SHELL_FILES); then \
+			printf '  ok       shellcheck %s\n' \
+				"$$(shellcheck --version | awk '/^version:/{print $$2}')"; \
+		else fail=1; fi; \
+	elif [ -n "$(SKIP_MISSING)" ]; then printf '  skipped  shellcheck (not installed)\n'; \
+	else printf '  MISSING  shellcheck — brew install shellcheck\n' >&2; fail=1; fi; \
+	if command -v actionlint >/dev/null 2>&1; then \
+		if actionlint; then \
+			printf '  ok       actionlint %s\n' "$$(actionlint --version | head -1)"; \
+		else fail=1; fi; \
+	elif [ -n "$(SKIP_MISSING)" ]; then printf '  skipped  actionlint (not installed)\n'; \
+	else printf '  MISSING  actionlint — brew install actionlint\n' >&2; fail=1; fi; \
+	if [ $$fail -eq 0 ]; then printf 'static analysis clean\n'; \
+	else printf 'static analysis FAILED\n' >&2; fi; \
+	exit $$fail
+
+lint-tools: ## Install the static analysis tools
+	brew install shellcheck actionlint
+
+# core.hooksPath is per-clone git config, not something a checkout can carry, so
+# this has to be run once per machine. The hooks themselves are committed.
+hooks: ## Enable the committed git hooks (once per clone)
+	@git config core.hooksPath .githooks
+	@chmod +x .githooks/*
+	@printf 'hooks enabled — pre-commit runs lint, pre-push runs the full suite\n'
+
+unhooks: ## Disable the committed git hooks
+	@git config --unset core.hooksPath || true
+	@printf 'hooks disabled\n'
 
 deps: ## Verify rclone is present and new enough
 	@command -v rclone >/dev/null 2>&1 || { printf 'rclone not found: brew install rclone\n'; exit 1; }

@@ -17,18 +17,24 @@ jobs:
         run: make deps
       - name: Version consistency
         run: make check-version
-      - name: Syntax
-        run: bash -n ferry && bash -n tests/run.sh
       - name: Tests
         run: make test
 
   lint:
-    # Blocking. There are no findings to triage — the codebase is clean at
-    # shellcheck's default level, and .shellcheckrc disables both codes for
-    # dynamically dispatched functions so the result does not depend on which
-    # shellcheck version the runner happens to have.
+    # Blocking. There are no findings to triage — the codebase is clean, and
+    # .shellcheckrc disables both codes for dynamically dispatched functions so
+    # the result does not depend on which shellcheck version the runner has.
+    #
+    # This runs `make lint` rather than the tools directly, deliberately: the
+    # command and the file list are defined once, in the Makefile, so what runs
+    # here cannot drift from what the pre-commit hook runs on a laptop.
+    #
+    # SKIP_MISSING is NOT set: if a tool fails to install, this job fails rather
+    # than silently checking nothing and reporting green.
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - run: brew install shellcheck
-      - run: make lint
+      - name: Install shellcheck and actionlint
+        run: brew install shellcheck actionlint
+      - name: make lint
+        run: make lint

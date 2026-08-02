@@ -181,11 +181,30 @@ before you consolidate it in.
 make test           # full suite; every group drives real rclone bisync, no mocks
 make test T="9"     # one group; T="-k conflict" filters by name
 make list-tests
-make lint           # shellcheck
+make lint           # static analysis — the exact command CI runs
+make lint-tools     # brew install shellcheck actionlint
+make hooks          # enable the committed git hooks (once per clone)
 make deps           # verify rclone is present and new enough
 make check-version  # VERSION= in ferry must match the man page
-bash -n ferry       # syntax check
 ```
+
+### Git hooks
+
+The hooks are committed in `.githooks/`, but `core.hooksPath` is per-clone git config,
+so a fresh checkout needs one command:
+
+```sh
+make hooks          # make unhooks reverses it
+```
+
+- **pre-commit** — `make check-version` and `make lint`. The fast half, about a second.
+- **pre-push** — those plus `make test`. The last gate before code becomes public, so it
+  repeats the static analysis deliberately: a commit made with `--no-verify` would
+  otherwise reach the remote having been checked by nothing.
+
+They invoke the same make targets CI does rather than restating the commands, so the two
+cannot drift. What they **cannot** catch is a tool version difference between your machine
+and the runner — that class is handled in `.shellcheckrc`.
 
 ### Releasing
 
