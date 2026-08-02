@@ -113,9 +113,14 @@ unhooks: ## Disable the committed git hooks
 APP_BUILD = app/.build/release/Ferry
 APP_BUNDLE = app/.build/Ferry.app
 
+# SWIFT_BUILD_FLAGS exists for Homebrew: SwiftPM sandboxes its own manifest
+# compilation, which fails inside brew's outer sandbox. The formula passes
+# --disable-sandbox; brew's sandbox still confines the whole build.
+SWIFT_BUILD_FLAGS ?=
+
 app: ## Build Ferry.app (SwiftPM + hand-assembled bundle)
 	@command -v swift >/dev/null 2>&1 || { printf 'swift not found — install the Xcode Command Line Tools\n' >&2; exit 1; }
-	swift build -c release --package-path app
+	swift build -c release --package-path app $(SWIFT_BUILD_FLAGS)
 	@rm -rf $(APP_BUNDLE)
 	@mkdir -p $(APP_BUNDLE)/Contents/MacOS
 	@v=$$(grep -m1 '^VERSION=' ferry | cut -d= -f2); \
