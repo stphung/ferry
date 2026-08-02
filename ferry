@@ -7,7 +7,7 @@
 
 set -eu
 
-VERSION=0.7.6
+VERSION=0.7.7
 
 # GUI and launchd contexts (Spotlight, Ferry.app, the scheduled sync) start
 # with a minimal PATH that lacks Homebrew — so rclone "isn't installed" and
@@ -221,12 +221,17 @@ resync_done() {
 # ----------------------------------------------------------- rclone helpers --
 
 rclone_common() {
+	# --multi-thread-streams 0: rclone's parallel-stream download of one big
+	# file kept tripping SMB i/o timeouts (observed: a 15 GB file failing at
+	# ~10.9 GiB three times, killing a 5-hour resync). Ferry writes to SMB by
+	# design; one reliable stream beats four fragile ones.
 	printf '%s\n' \
 		--transfers "$TRANSFERS" \
 		--checkers "$CHECKERS" \
 		--tpslimit "$TPSLIMIT" \
 		--retries "$RETRIES" \
-		--low-level-retries "$LOW_LEVEL_RETRIES"
+		--low-level-retries "$LOW_LEVEL_RETRIES" \
+		--multi-thread-streams 0
 }
 
 remote_of() { printf '%s\n' "${1%%:*}:"; }
