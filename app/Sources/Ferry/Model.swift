@@ -83,6 +83,12 @@ final class StatusModel: ObservableObject {
     @Published var actionExit: Int32?
     @Published var actionTruncated = false
     @Published var actionStarted: Date?
+    // a run started OUTSIDE the app (CLI, launchd): its log, followed live
+    @Published var externalOutput = ""
+    @Published var externalSince: Date?
+    private var externalProc: Process?
+    private var externalPath = ""
+    private var externalLines: [String] = []
 
     // output arrives on the pipe thread and is flushed to the UI in batches —
     // per-line @Published updates froze the app on chatty commands (a check
@@ -134,6 +140,7 @@ final class StatusModel: ObservableObject {
                 self.activity = items
                 self.apply(p, exit: status.status)
                 self.rewatch(stateDir: p["state_dir"])
+                self.syncExternalFollow(p)
             }
         }
     }
@@ -159,6 +166,42 @@ final class StatusModel: ObservableObject {
         default:              symbol = "questionmark.circle"; title = state
         }
         syncRunning = (state == "syncing")
+    }
+
+    /// Follow (or stop following) the log of a run this app did not start.
+    private func syncExternalFollow(_ p: Porcelain) {
+        let log = p["current_log"]
+        let shouldFollow = state == "syncing" && !actionRunning && !log.isEmpty
+        if shouldFollow {
+            if let epoch = Int(p["running_since"]) {
+                externalSince = Date(timeIntervalSince1970: TimeInterval(epoch))
+            }
+            guard externalPath != log else { return }
+            stopExternalFollow()
+            externalPath = log
+            externalLines = []
+            externalOutput = ""
+            externalProc = FerryCLI.stream("/usr/bin/tail", ["-n", "40", "-f", log]) { [weak self] line in
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.externalLines.append(line)
+                    if self.externalLines.count > 200 {
+                        self.externalLines.removeFirst(self.externalLines.count - 200)
+                    }
+                    self.externalOutput = self.externalLines.joined(separator: "\n")
+                }
+            } onExit: { _ in }
+        } else if externalProc != nil || !externalPath.isEmpty {
+            stopExternalFollow()
+        }
+    }
+
+    private func stopExternalFollow() {
+        externalProc?.terminate()
+        externalProc = nil
+        externalPath = ""
+        externalSince = nil
+        if state != "syncing" { externalOutput = "" }
     }
 
     private func rewatch(stateDir: String) {

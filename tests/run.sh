@@ -1010,6 +1010,26 @@ teardown
 }
 
 
+# 45. A running sync is observable by anyone: the lock records its log and
+#     porcelain exposes it — the panel follows CLI- and launchd-started runs
+test_45_running_sync_observable() {
+setup
+seed 3
+establish
+mkdir -p "$state/lock"
+printf '%s\n' "$$" > "$state/lock/pid"
+printf '%s' "$state/logs/fake-current.log" > "$state/lock/log"
+run status --porcelain
+expect_contains "45a state is syncing while locked" "state=syncing" "$out"
+expect_contains "45b the running log is exposed" "current_log=$state/logs/fake-current.log" "$out"
+expect_contains "45c and when it started" "running_since=" "$out"
+rm -rf "$state/lock"
+run status --porcelain
+expect_not_contains "45d gone when the run ends" "current_log=" "$out"
+teardown
+}
+
+
 # ------------------------------------------------------------------ runner --
 
 all_tests=$(declare -F | awk '{print $3}' | grep '^test_[0-9]' | sort)

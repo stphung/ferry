@@ -214,6 +214,46 @@ struct StatusPage: View {
                     ActionOutput(model: model)
                 }
 
+                // a run started outside the app — CLI or the schedule — is
+                // followed live here; a sync is a sync regardless of who
+                // pressed the button
+                if model.state == "syncing" && !model.actionRunning {
+                    GroupBox {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Text("Sync in progress").font(.headline)
+                                ProgressView().controlSize(.small)
+                                if let since = model.externalSince {
+                                    TimelineView(.periodic(from: since, by: 1)) { _ in
+                                        Text("running \(Fmt.age(String(Int(Date().timeIntervalSince(since)))))")
+                                            .font(.caption.monospacedDigit())
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                                Spacer()
+                                Text("started outside the app")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                            Text("The listing phase is quiet — heartbeat lines appear every 30 seconds until transfers begin.")
+                                .font(.caption).foregroundStyle(.secondary)
+                            ScrollViewReader { proxy in
+                                ScrollView {
+                                    Text(model.externalOutput.isEmpty ? "…" : model.externalOutput)
+                                        .font(.system(.caption, design: .monospaced))
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .textSelection(.enabled)
+                                        .id("xtail")
+                                }
+                                .frame(height: 160)
+                                .onChange(of: model.externalOutput) { _ in
+                                    proxy.scrollTo("xtail", anchor: .bottom)
+                                }
+                            }
+                        }
+                        .padding(4)
+                    }
+                }
+
                 // recent activity preview — fills the page and answers the
                 // next question ("what did it move?") without a page switch
                 if !model.activity.isEmpty {

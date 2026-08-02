@@ -7,7 +7,7 @@
 
 set -eu
 
-VERSION=0.7.5
+VERSION=0.7.6
 
 # GUI and launchd contexts (Spotlight, Ferry.app, the scheduled sync) start
 # with a minimal PATH that lacks Homebrew — so rclone "isn't installed" and
@@ -804,6 +804,7 @@ cmd_sync() {
 	stamp=$(date +%Y%m%dT%H%M%S)
 	day=$(date +%Y-%m-%d)
 	log="$LOG_DIR/$stamp.log"
+	printf '%s' "$log" > "$LOCK_DIR/log" 2>/dev/null || true
 	start=$SECONDS
 
 	local args
@@ -999,6 +1000,10 @@ status_porcelain() {
 	printf 'path1=%s\n'       "$PATH1"
 	printf 'path2=%s\n'       "$PATH2"
 	printf 'age_seconds=%s\n' "$age"
+	if [ "$running" = 1 ]; then
+		[ -f "$LOCK_DIR/log" ] && printf 'current_log=%s\n' "$(cat "$LOCK_DIR/log")"
+		printf 'running_since=%s\n' "$(stat -f %m "$LOCK_DIR" 2>/dev/null || true)"
+	fi
 	printf 'state_dir=%s\n'   "$STATE_DIR"
 	printf 'config_file=%s\n' "$CONFIG_FILE"
 	printf 'attic=%s\n'       "$ATTIC"
@@ -1266,6 +1271,7 @@ cmd_resync() {
 	local stamp log rc=0
 	stamp=$(date +%Y%m%dT%H%M%S)
 	log="$LOG_DIR/$stamp-resync.log"
+	printf '%s' "$log" > "$LOCK_DIR/log" 2>/dev/null || true
 
 	local args
 	args=$(printf '%s\n' \
