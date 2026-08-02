@@ -130,6 +130,13 @@ attic-overlap rail holds at write time.
 
 ## Ferry.app
 
+One panel: an AppKit NSStatusItem whose click opens a single SwiftUI Window with
+sidebar pages (Status, Activity, Attic, Doctor, Settings); onboarding replaces the
+panel content while `state=unconfigured`. MenuBarExtra was used in 0.3–0.4 and
+replaced deliberately: it cannot open a window on click (it owns its content), and
+its labels render monochrome. NSStatusItem does both — the attributed title carries
+state by colour AND symbol.
+
 Built by `make app`: SwiftPM produces the binary, the bundle is assembled by hand
 (Info.plist.in + codesign -s -) because this machine may have only the CLT — no
 xcodebuild. `ferry app install` copies it to ~/Applications (FERRY_APP_DEST overrides,
@@ -137,17 +144,28 @@ which is how the test suite stays sandboxed) and drives login registration by ru
 the app binary with --register-login / --unregister-login — SMAppService can only be
 called from inside the app.
 
-Two hard-won facts:
+UI rules learned the hard way, do not regress them:
 
-- **`model.start()` must hang off the MenuBarExtra LABEL, not the menu content.** The
-  label renders immediately; the menu content's onAppear only fires on first click.
-  Hooked to the menu, the model never starts and the title sits on "…" forever.
-- **MenuBarExtra labels render monochrome** — text colour does not survive. State is
-  carried by SF Symbol shape (octagon=blocked, clock=stale, dashed circle=setup...),
-  never by colour.
+- **Every actionable control carries a text label.** Icon-only buttons shipped once
+  (the 0.4 popover footer) and were explicitly called out as not understandable.
+  SwiftUI toolbars strip Label text by default — use .labelStyle(.titleAndIcon).
+- **The wizard is `ferry setup` with a face**: every choice discovers (remotes,
+  folders via `browse`) or creates (`remote-create-smb`, `remote-create-onedrive`,
+  `mkdir`) through CLI primitives. Nothing — remote names, hosts, providers — is
+  hardcoded anywhere.
+- **OneDrive onboarding uses rclone's non-interactive config state machine**,
+  verified step by step: create(token) → *oauth-confirm(false) →
+  choose_type(onedrive) → driveid_final(id) → driveid_final_end(true). `rclone
+  backend drives` does NOT work for this (onedrive doesn't support backend
+  commands). The only rclone call the app makes itself is `rclone authorize
+  onedrive` — the browser sign-in that produces the token.
+- FERRY_UI_PAGE / FERRY_UI_STEP are screenshot scaffolding: they preselect a page
+  or wizard step and auto-open the panel, because nothing can click the status item
+  in an automated capture. Never set in normal use.
 
 The app deliberately has no timer-driven sync (launchd owns the schedule), no network
-access, and no one-click resync. Keep it that way.
+access of its own, and no one-click resync (the typed ritual lives in ResyncSheet).
+Keep it that way.
 
 ## Constraints
 

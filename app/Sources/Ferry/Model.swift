@@ -18,6 +18,18 @@ struct ActivityItem: Identifiable {
     }
     var name: String { (path as NSString).lastPathComponent }
     var folder: String { (path as NSString).deletingLastPathComponent }
+
+    /// rclone's log phrasing, translated for humans.
+    var friendlyAction: String {
+        if action.hasPrefix("Deleted") { return "Deleted" }
+        if action.hasPrefix("Moved") { return "Moved" }
+        if action.hasPrefix("Renamed") { return "Renamed" }
+        if action == "Copied (new)" { return "Added" }
+        if action.hasPrefix("Copied (replaced") { return "Updated" }
+        if action.hasPrefix("Copied") { return "Copied" }
+        if action.hasPrefix("Updated modification") { return "Touched" }
+        return action
+    }
 }
 
 struct AtticEntry: Identifiable {
@@ -194,11 +206,11 @@ final class StatusModel: ObservableObject {
             }
             // An older ferry has no --porcelain here; a spinner that never
             // resolves would look like a hang. Say what is actually wrong.
-            if rows.isEmpty {
-                rows = [DoctorRow(status: "bad", slug: "version",
-                                  detail: "ferry \(bin) is too old for this app — brew upgrade ferry")]
-            }
-            await MainActor.run { self.doctor = rows }
+            let final = rows.isEmpty
+                ? [DoctorRow(status: "bad", slug: "version",
+                             detail: "ferry \(bin) is too old for this app — brew upgrade ferry")]
+                : rows
+            await MainActor.run { self.doctor = final }
         }
     }
 
@@ -236,4 +248,115 @@ final class StatusModel: ObservableObject {
         guard !log.isEmpty else { return }
         NSWorkspace.shared.open(URL(fileURLWithPath: log))
     }
+
+    // MARK: - onboarding primitives (all through ferry; rclone only for the
+    // browser sign-in that produces the token)
+
+    struct Remote: Identifiable, Hashable {
+        var id: String { name }
+        let name: String
+        let type: String
+    }
+
+    @Published var remotes: [Remote] = []
+
+    func loadRemotes() {
+        guard let bin = ferryBin ?? FerryCLI.find() else { return }
+        Task.detached(priority: .utility) {
+            let r = FerryCLI.run(bin, ["remotes", "--porcelain"])
+            let list: [Remote] = r.out.split(separator: "\n").compactMap { line in
+                let f = line.split(separator: "\t").map(String.init)
+                guard f.count == 2 else { return nil }
+                return Remote(name: f[0], type: f[1])
+            }
+            await MainActor.run { self.remotes = list; self.ferryBin = bin }
+        }
+    }
+
+    func createSMB(name: String, host: String, user: String, password: String) async -> String? {
+        guard let bin = ferryBin else { return "ferry not found" }
+        let r = await Task.detached(priority: .utility) {
+            FerryCLI.runWithInput(bin, ["remote-create-smb", name, host, user],
+                                  stdin: password + "\n")
+        }.value
+        if r.status != 0 { return r.err.isEmpty ? "could not create the remote" : r.err }
+        loadRemotes()
+        return nil
+    }
+
+    /// Browser sign-in. Streams `rclone authorize onedrive`, which opens the
+    /// default browser; the token JSON appears in its output when the user
+    /// finishes. Returns the token, or an error message.
+    func authorizeOneDrive() async -> (token: String?, error: String?) {
+        guard let rclone = FerryCLI.findRclone() else { return (nil, "rclone not found") }
+        return await withCheckedContinuation { cont in
+            var all = ""
+            FerryCLI.stream(rclone, ["authorize", "onedrive"]) { line in
+                all += line + "\n"
+            } onExit: { code in
+                // token is the last {...} JSON object in the output
+                if code == 0,
+                   let start = all.range(of: "{", options: .backwards),
+                   let end = all.range(of: "}", options: .backwards),
+                   start.lowerBound < end.upperBound {
+                    cont.resume(returning: (String(all[start.lowerBound..<end.upperBound]), nil))
+                } else {
+                    cont.resume(returning: (nil, "sign-in did not complete (exit \(code))"))
+                }
+            }
+        }
+    }
+
+    struct Drive: Identifiable, Hashable {
+        var id: String { driveID }
+        let driveID: String
+        let label: String
+    }
+
+    /// exit 2 from the primitive means "here are the drives, pick one".
+    /// done=true means the remote exists; otherwise pick from drives or show error.
+    func createOneDrive(name: String, token: String, drive: String?) async
+        -> (done: Bool, drives: [Drive], error: String?) {
+        guard let bin = ferryBin else { return (false, [], "ferry not found") }
+        var args = ["remote-create-onedrive", name]
+        if let d = drive { args += ["--drive", d] }
+        let r = await Task.detached(priority: .utility) {
+            FerryCLI.runWithInput(bin, args, stdin: token)
+        }.value
+        if r.status == 0 { loadRemotes(); return (true, [], nil) }
+        if r.status == 2 {
+            let drives: [Drive] = r.out.split(separator: "\n").compactMap { line in
+                let f = line.split(separator: "\t", maxSplits: 1).map(String.init)
+                guard f.count == 2 else { return nil }
+                return Drive(driveID: f[0], label: f[1])
+            }
+            return (false, drives, nil)
+        }
+        return (false, [], r.err.isEmpty ? "could not create the remote" : r.err)
+    }
+
+    func browse(_ path: String) async -> [String] {
+        guard let bin = ferryBin else { return [] }
+        let r = await Task.detached(priority: .utility) {
+            FerryCLI.run(bin, ["browse", path])
+        }.value
+        return r.out.split(separator: "\n").map(String.init)
+    }
+
+    func peek(_ path: String) async -> String {
+        guard let bin = ferryBin else { return "?" }
+        let r = await Task.detached(priority: .utility) {
+            FerryCLI.run(bin, ["peek", path])
+        }.value
+        return r.status == 0 ? r.out.trimmingCharacters(in: .whitespacesAndNewlines) : "?"
+    }
+
+    func mkdir(_ path: String) async -> Bool {
+        guard let bin = ferryBin else { return false }
+        let r = await Task.detached(priority: .utility) {
+            FerryCLI.run(bin, ["mkdir", path])
+        }.value
+        return r.status == 0
+    }
 }
+

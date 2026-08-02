@@ -1,4 +1,4 @@
-.TH FERRY 1 "2026-08-01" "ferry 0.4.0" "User Commands"
+.TH FERRY 1 "2026-08-01" "ferry 0.5.0" "User Commands"
 .SH NAME
 ferry \- keep a NAS folder and OneDrive as a two-way mirror, safely
 .SH SYNOPSIS
@@ -124,6 +124,15 @@ Write one setting to the config file, validated exactly as
 itself would validate it \(em unknown keys, non-numeric values for numeric
 keys, and an attic inside the synced tree are all rejected. Used by
 Ferry.app's settings window; equally usable from scripts.
+.TP
+.B remotes|remote\-create\-smb|remote\-create\-onedrive|browse|mkdir|peek
+Primitives behind Ferry.app's onboarding, equally usable from scripts:
+list configured rclone remotes, create an SMB remote (password on stdin),
+create a OneDrive remote from an authorize token (token on stdin; without
+.B \-\-drive
+it lists the account's drives as TSV and exits 2), list a path's
+subdirectories, create a folder, and count a path's top-level entries.
+Nothing assumes a provider or a name.
 .SH CONFIGURATION
 .B ferry
 reads

@@ -7,16 +7,19 @@
 
 set -eu
 
-VERSION=0.4.0
+VERSION=0.5.0
 
 # ---------------------------------------------------------------- defaults --
 #
 # Every one of these can be overridden in the config file. Anything else in
 # that file is an error, so a typo is caught rather than silently ignored.
 
-PATH1="unas-vault:Vault"          # the NAS side, and the winner at resync
-PATH2="onedrive:"                 # the cloud side
-ATTIC="unas-vault:ferry-attic"    # must NOT be inside PATH1, see check_attic
+# Deliberately EMPTY until `ferry setup` (or the app's onboarding) writes the
+# config: shipping a default pair would sync two locations the user never
+# chose. Commands that need a pair refuse until configured.
+PATH1=""                          # the NAS side, and the winner at resync
+PATH2=""                          # the cloud side
+ATTIC=""                          # must NOT be inside PATH1, see attic_overlaps
 MAX_DELETE=5                      # PERCENT, not a count — verified, see CLAUDE.md
 TRANSFERS=8
 CHECKERS=16
@@ -128,9 +131,13 @@ load_config() {
 	LAST_RUN="$STATE_DIR/last-run"
 	BLOCKED="$STATE_DIR/blocked"
 
-	[ -n "$PATH1" ] || die "PATH1 is empty"
-	[ -n "$PATH2" ] || die "PATH2 is empty"
 	mkdir -p "$STATE_DIR" "$WORKDIR" "$LOG_DIR"
+}
+
+configured() { [ -n "$PATH1" ] && [ -n "$PATH2" ]; }
+
+require_configured() {
+	configured || die "not configured yet — run 'ferry setup' (or use Ferry.app's onboarding)"
 }
 
 # The attic receives files bisync would otherwise delete from PATH1. If it sits
@@ -243,6 +250,126 @@ require_markers() {
 		marker_present "$p" || { bad "$p/$CHECK_FILENAME missing"; missing=1; }
 	done
 	[ "$missing" = 0 ] || die "run 'ferry markers' once to place the access markers"
+}
+
+# ----------------------------------------------------------------- remotes --
+#
+# Primitives for the app's onboarding. Everything here is equally usable from
+# a terminal, and none of it assumes a remote name, host or provider: the
+# wizard discovers what exists and creates what does not.
+
+cmd_remotes() {
+	local porcelain=0
+	case "${1:-}" in
+		--porcelain) porcelain=1 ;;
+	esac
+	rclone listremotes --long 2>/dev/null | while IFS= read -r line; do
+		[ -n "$line" ] || continue
+		local name type
+		name=${line%%:*}
+		type=$(printf '%s' "${line#*:}" | tr -d ' ')
+		if [ "$porcelain" = 1 ]; then
+			printf '%s\t%s\n' "$name" "$type"
+		else
+			printf '  %-20s %s\n' "$name" "$type" >&2
+		fi
+	done
+}
+
+# Password arrives on stdin, never as an argument — arguments are visible in
+# the process table for as long as the command runs.
+cmd_remote_create_smb() {
+	local name="${1:-}" host="${2:-}" user="${3:-}"
+	[ -n "$name" ] && [ -n "$host" ] || die "remote-create-smb NAME HOST [USER]  (password on stdin)"
+	case "$name" in
+		*[!a-zA-Z0-9_-]*) die "remote-create-smb: name may only contain letters, digits, - and _" ;;
+	esac
+	local plain="" obscured
+	IFS= read -r plain || true
+	obscured=$(printf '%s' "$plain" | rclone obscure - 2>/dev/null) \
+		|| die "could not obscure the password"
+	rclone config create "$name" smb host="$host" user="${user:-$(id -un)}" pass="$obscured" \
+		>/dev/null 2>&1 || die "rclone could not create the remote"
+	ok "created SMB remote $name: ($host)"
+}
+
+# OneDrive, driven through rclone's non-interactive config protocol — the
+# same state machine its interactive wizard uses, verified step by step:
+#   create(token) -> *oauth-confirm(false) -> choose_type(onedrive)
+#   -> driveid_final(<drive>) -> driveid_final_end(true) -> done
+# Token JSON arrives on stdin (from `rclone authorize onedrive`).
+# Without --drive: prints the available drives as TSV (id, description) and
+# exits 2, meaning "pick one and call again with --drive".
+cmd_remote_create_onedrive() {
+	local name="" driveid=""
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			--drive) shift; driveid="${1:-}" ;;
+			-*) die "remote-create-onedrive: unknown option '$1'" ;;
+			*) name="$1" ;;
+		esac
+		shift
+	done
+	[ -n "$name" ] || die "remote-create-onedrive NAME [--drive ID]  (token JSON on stdin)"
+	case "$name" in
+		*[!a-zA-Z0-9_-]*) die "remote-create-onedrive: name may only contain letters, digits, - and _" ;;
+	esac
+
+	local token=""
+	token=$(cat)
+	[ -n "$token" ] || die "remote-create-onedrive: no token on stdin (run: rclone authorize onedrive)"
+
+	rclone config create "$name" onedrive token="$token" --non-interactive >/dev/null 2>&1 \
+		|| die "rclone rejected the token"
+	rclone config update "$name" --non-interactive --continue \
+		--state="*oauth-confirm,choose_type,," --result=false >/dev/null 2>&1 || true
+
+	local drives
+	drives=$(rclone config update "$name" --non-interactive --continue \
+		--state=choose_type_done --result=onedrive 2>/dev/null)
+
+	if [ -z "$driveid" ]; then
+		# TSV of choices for the caller to present; exit 2 = pick and re-run
+		printf '%s' "$drives" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+for e in (d.get("Option") or {}).get("Examples") or []:
+    print("%s\t%s" % (e["Value"], e["Help"]))
+' 2>/dev/null || die "could not list drives — is the token valid?"
+		exit 2
+	fi
+
+	rclone config update "$name" --non-interactive --continue \
+		--state=driveid_final --result="$driveid" >/dev/null 2>&1 \
+		|| die "drive $driveid was rejected"
+	rclone config update "$name" --non-interactive --continue \
+		--state=driveid_final_end --result=true >/dev/null 2>&1 \
+		|| die "could not confirm the drive"
+	ok "created OneDrive remote $name: (drive $driveid)"
+}
+
+# Directory listing for the wizard's folder pickers. TSV, one name per line.
+cmd_browse() {
+	local path="${1:-}"
+	[ -n "$path" ] || die "browse REMOTE:PATH"
+	probe lsf "$path" --dirs-only 2>/dev/null | sed 's:/$::'
+}
+
+# The wizard's "new folder" — bisync refuses paths that do not exist, so the
+# folder must be creatable from the picker.
+cmd_mkdir() {
+	local path="${1:-}"
+	[ -n "$path" ] || die "mkdir REMOTE:PATH"
+	probe mkdir "$path" 2>/dev/null || die "could not create $path"
+	ok "created $path"
+}
+
+# Top-level entry count — the markers safety check needs the human to SEE
+# that both sides look like real data before trusting them.
+cmd_peek() {
+	local path="${1:-}"
+	[ -n "$path" ] || die "peek REMOTE:PATH"
+	probe lsf "$path" --max-depth 1 2>/dev/null | wc -l | tr -d ' '
 }
 
 # ------------------------------------------------------------------- setup --
@@ -422,6 +549,7 @@ cmd_setup() {
 # let a --mode path1 resync empty the cloud. So we show both sides first.
 
 cmd_markers() {
+	require_configured
 	local assume=0
 	while [ $# -gt 0 ]; do
 		case "$1" in
@@ -473,6 +601,7 @@ cmd_markers() {
 # --------------------------------------------------------------------- sync --
 
 cmd_sync() {
+	require_configured
 	local dry=0 verbose=0
 	while [ $# -gt 0 ]; do
 		case "$1" in
@@ -660,6 +789,7 @@ status_porcelain() {
 	fi
 
 	if   [ "$running" = 1 ];                     then state=syncing
+	elif ! configured;                           then state=unconfigured
 	elif [ "$blocked" = 1 ];                     then state=blocked
 	elif [ "$established" = 0 ];                 then state=unestablished
 	elif [ ! -f "$LAST_RUN" ];                   then state=never
@@ -804,6 +934,12 @@ cmd_doctor() {
 	else dr info config "$CONFIG_FILE (absent — using defaults)"; fi
 	dr info state "$STATE_DIR"
 
+	if ! configured; then
+		dr bad config "not configured — run 'ferry setup' or use Ferry.app's onboarding"
+		[ "$DOCTOR_PORCELAIN" = 1 ] || printf '\n' >&2
+		return 1
+	fi
+
 	dr_head "remotes"
 	local p
 	for p in "$PATH1" "$PATH2"; do
@@ -868,6 +1004,7 @@ cmd_doctor() {
 # -------------------------------------------------------------------- check --
 
 cmd_check() {
+	require_configured
 	info "comparing $PATH1 and $PATH2 (read-only, no changes)"
 	local oldifs="$IFS"
 	IFS='
@@ -883,6 +1020,7 @@ cmd_check() {
 # ------------------------------------------------------------------- resync --
 
 cmd_resync() {
+	require_configured
 	local dry=0 mode=path1 assume=0
 	while [ $# -gt 0 ]; do
 		case "$1" in
@@ -1091,6 +1229,7 @@ cmd_config_set() {
 # -------------------------------------------------------------------- attic --
 
 cmd_attic() {
+	require_configured
 	local sub="${1:-list}"
 	[ $# -gt 0 ] && shift
 	local porcelain=0
@@ -1408,6 +1547,12 @@ usage() {
 	                            recent per-file transfers, from the run logs
 	  ferry config-set KEY VALUE
 	                            validated single-setting write (used by the app)
+	  ferry remotes [--porcelain]          configured rclone remotes
+	  ferry remote-create-smb NAME HOST [USER]     password on stdin
+	  ferry remote-create-onedrive NAME [--drive ID]   token on stdin
+	  ferry browse REMOTE:PATH             subdirectories, one per line
+	  ferry mkdir REMOTE:PATH              create a folder
+	  ferry peek REMOTE:PATH               top-level entry count
 	  ferry resync [-n] [--mode path1|path2|newer|older|larger|smaller]
 	                            establish or re-establish the pair (interactive)
 	  ferry attic list|restore DATE [DEST]|prune
@@ -1447,6 +1592,12 @@ main() {
 		doctor)   cmd_doctor "$@" ;;
 		activity) cmd_activity "$@" ;;
 		config-set) cmd_config_set "$@" ;;
+		remotes)  cmd_remotes "$@" ;;
+		remote-create-smb) cmd_remote_create_smb "$@" ;;
+		remote-create-onedrive) cmd_remote_create_onedrive "$@" ;;
+		browse)   cmd_browse "$@" ;;
+		mkdir)    cmd_mkdir "$@" ;;
+		peek)     cmd_peek "$@" ;;
 		check)    cmd_check "$@" ;;
 		resync)   cmd_resync "$@" ;;
 		attic)    cmd_attic "$@" ;;

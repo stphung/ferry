@@ -752,6 +752,80 @@ teardown
 }
 
 
+# 36. Nothing is hardcoded: with no PATH1/PATH2 the state is 'unconfigured',
+#     pair commands refuse, and doctor says exactly what to do
+test_36_unconfigured() {
+setup
+printf 'NOTIFY=0\n' > "$conf"    # a config that sets no pair
+run status --porcelain
+expect_status "36a status still works" 0
+expect_contains "36b state is unconfigured" "state=unconfigured" "$out"
+
+run sync
+expect_status "36c sync refuses" 1
+expect_contains "36d and names the fix" "ferry setup" "$err"
+
+run resync --yes
+expect_status "36e resync refuses too" 1
+
+run doctor --porcelain
+expect_status "36f doctor exits 1" 1
+expect_contains "36g doctor reports the config bad" "bad	config" "$out"
+teardown
+}
+
+# 37. Remote primitives, sandboxed via RCLONE_CONFIG — the suite must never
+#     write to the user's real rclone config
+test_37_remote_primitives() {
+setup
+rcconf="$work/rclone.conf"
+printf '[testsmb]\ntype = smb\nhost = 127.0.0.1\n\n[testcloud]\ntype = onedrive\n' > "$rcconf"
+
+out=$(RCLONE_CONFIG="$rcconf" FERRY_CONFIG="$conf" FERRY_STATE_DIR="$state" \
+    "$FERRY" remotes --porcelain 2>"$work/err"); status=$?
+expect_status "37a remotes lists the sandbox config" 0
+expect_contains "37b smb remote with its type" "testsmb	smb" "$out"
+expect_contains "37c onedrive remote with its type" "testcloud	onedrive" "$out"
+
+printf 'sekrit\n' | RCLONE_CONFIG="$rcconf" FERRY_CONFIG="$conf" FERRY_STATE_DIR="$state" \
+    "$FERRY" remote-create-smb newnas 192.0.2.9 alice 2>"$work/err"; status=$?
+expect_status "37d smb create succeeds" 0
+expect_contains "37e the remote landed in the sandbox" "[newnas]" "$(cat "$rcconf")"
+expect_contains "37f with the host" "192.0.2.9" "$(cat "$rcconf")"
+expect_not_contains "37g password never stored in clear" "sekrit" "$(cat "$rcconf")"
+
+out=$(RCLONE_CONFIG="$rcconf" FERRY_CONFIG="$conf" FERRY_STATE_DIR="$state" \
+    "$FERRY" remote-create-smb 'bad name!' host 2>"$work/err" </dev/null); status=$?
+expect_status "37h invalid remote name rejected" 1
+
+# onedrive create without a token must fail loudly, not create debris
+out=$(printf '' | RCLONE_CONFIG="$rcconf" FERRY_CONFIG="$conf" FERRY_STATE_DIR="$state" \
+    "$FERRY" remote-create-onedrive od1 2>"$work/err"); status=$?
+err=$(cat "$work/err")
+expect_status "37i empty token rejected" 1
+expect_contains "37j and the fix is named" "rclone authorize" "$err"
+teardown
+}
+
+# 38. browse and peek: the wizard's folder picker and the markers safety count
+test_38_browse_peek() {
+setup
+mkdir -p "$p1/Documents" "$p1/Photos/2024"
+printf 'x\n' > "$p1/loose-file.txt"
+run browse "$p1"
+expect_status "38a browse succeeds" 0
+expect_contains "38b lists Documents" "Documents" "$out"
+expect_contains "38c lists Photos" "Photos" "$out"
+expect_not_contains "38d files are not directories" "loose-file" "$out"
+expect_not_contains "38e no recursion" "2024" "$out"
+
+run peek "$p1"
+expect_status "38f peek succeeds" 0
+expect_eq "38g counts top-level entries (2 dirs + 1 file + marker)" "4" "$out"
+teardown
+}
+
+
 # ------------------------------------------------------------------ runner --
 
 all_tests=$(declare -F | awk '{print $3}' | grep '^test_[0-9]' | sort)

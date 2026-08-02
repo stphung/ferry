@@ -102,6 +102,47 @@ struct Porcelain {
     }
 }
 
+extension FerryCLI {
+    /// Run with data written to stdin (passwords, tokens — never arguments,
+    /// which are visible in the process table).
+    static func runWithInput(_ bin: String, _ args: [String], stdin: String)
+        -> (out: String, err: String, status: Int32) {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: bin)
+        p.arguments = args
+        let inPipe = Pipe(), outPipe = Pipe(), errPipe = Pipe()
+        p.standardInput = inPipe
+        p.standardOutput = outPipe
+        p.standardError = errPipe
+        do { try p.run() } catch { return ("", "launch failed", -1) }
+        inPipe.fileHandleForWriting.write(stdin.data(using: .utf8) ?? Data())
+        inPipe.fileHandleForWriting.closeFile()
+        let out = outPipe.fileHandleForReading.readDataToEndOfFile()
+        let err = errPipe.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        return (String(data: out, encoding: .utf8) ?? "",
+                String(data: err, encoding: .utf8) ?? "",
+                p.terminationStatus)
+    }
+
+    /// rclone, for exactly one job: `rclone authorize onedrive` — the browser
+    /// sign-in that produces the token ferry's primitives consume. Everything
+    /// else goes through ferry.
+    static func findRclone() -> String? {
+        for c in ["/opt/homebrew/bin/rclone", "/usr/local/bin/rclone"] {
+            if FileManager.default.isExecutableFile(atPath: c) { return c }
+        }
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/bash")
+        p.arguments = ["-lc", "command -v rclone"]
+        let out = Pipe(); p.standardOutput = out; p.standardError = FileHandle.nullDevice
+        try? p.run(); p.waitUntilExit()
+        let s = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return s.isEmpty ? nil : s
+    }
+}
+
 enum Fmt {
     static func age(_ s: String) -> String {
         guard let v = Int(s), v >= 0 else { return "—" }

@@ -111,21 +111,25 @@ success is silent.
 ferry app install
 ```
 
-**Ferry.app** is a Dropbox-style menu bar app. Click the icon for a popover with the
-pair's state, cloud headroom, schedule, quick actions — Sync Now, Dry Run, Doctor — and
-an **activity feed** of recently transferred files, parsed from ferry's own run logs at
-zero extra cost.
+**Ferry.app** is a Dropbox-style app: the menu bar icon (state by colour and symbol)
+opens **one panel** with sidebar pages —
 
-Everything that needs to survive losing focus opens a real window:
-
-- **Dry Run / Check** — output streams live into a window, not a spinner-then-wall-of-text
-- **Doctor** — every precondition as a green/red checklist
+- **Status** — the pair's state front and centre, quick actions (Sync Now, Dry Run,
+  Check, a deliberately-weighted Resync…), live streamed output, and recent activity
+- **Activity** — the feed of recently transferred files, parsed from ferry's own run
+  logs at zero extra cost
 - **Attic** — browse dated snapshots of deleted files, restore a day with one confirm
   (restores never overwrite, so they cannot destroy anything)
-- **Resync** — the same ritual as the CLI: both sides shown, the winner's consequence in
-  plain words, and the button stays disabled until you type `resync`
+- **Doctor** — every precondition as a green/red checklist
 - **Settings** — schedule, interval, notifications, safety thresholds. Every write goes
   through `ferry config-set`, so the CLI's validation is the only validation
+
+**First launch is a real onboarding.** No terminal, nothing pre-assumed: pick or create
+the NAS connection (SMB form), sign in to OneDrive in your browser (ferry receives only
+the sync token, never your password — and you choose which drive), browse to the folders
+you want paired, review the counts on both sides, place the safety markers, and run the
+guided first sync. Resync in the app keeps the CLI's ritual: the button stays disabled
+until you type `resync`.
 
 The app is a *thin shell over the CLI*: it renders `status`/`activity`/`attic`/`doctor
 --porcelain` and shells out for actions. It never syncs on its own timer — launchd owns
