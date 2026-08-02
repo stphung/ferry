@@ -195,33 +195,36 @@ struct OnboardingView: View {
     }
 }
 
-// MARK: - remote picker (see, test, edit, delete — not just choose)
+// MARK: - remote picker: the standard macOS list pattern — a bordered list
+// with an Add/Remove footer, and creation/editing in a modal sheet. (A
+// collapsible inline form was tried and rightly called nonstandard.)
 
 struct RemotePicker: View {
     enum Kind { case nas, cloud }
+
+    enum SheetMode: Identifiable {
+        case createSMB
+        case editSMB(name: String, host: String, user: String)
+        case oneDrive
+        var id: String {
+            switch self {
+            case .createSMB: return "create"
+            case .editSMB(let n, _, _): return "edit-\(n)"
+            case .oneDrive: return "onedrive"
+            }
+        }
+    }
 
     @ObservedObject var model: StatusModel
     let kind: Kind
     @Binding var chosen: String
     let onNext: () -> Void
 
-    @State private var creating = false
-    @State private var editing = false
-    // form fields (create and edit share them)
-    @State private var formName = ""
-    @State private var formHost = ""
-    @State private var formUser = NSUserName()
-    @State private var formPass = ""
-    // details + connection test of the selected remote
+    @State private var sheet: SheetMode?
     @State private var info: [String: String] = [:]
     @State private var testing = false
     @State private var testResult: (ok: Bool, detail: String)?
     @State private var confirmDelete = false
-    // OneDrive flow
-    @State private var odName = "onedrive"
-    @State private var odBusy = false
-    @State private var odDrives: [StatusModel.Drive] = []
-    @State private var odToken = ""
     @State private var error: String?
 
     private var blurb: String {
@@ -241,7 +244,8 @@ struct RemotePicker: View {
         VStack(alignment: .leading, spacing: 12) {
             Text(blurb).foregroundStyle(.secondary)
 
-            if !eligible.isEmpty {
+            // the list + its attached footer, in one bordered unit
+            VStack(spacing: 0) {
                 List(eligible, selection: Binding(
                     get: { chosen.isEmpty ? nil : chosen },
                     set: { select($0) })
@@ -272,59 +276,53 @@ struct RemotePicker: View {
                     }
                     .tag(r.name)
                 }
-                .frame(minHeight: 120, maxHeight: 200)
+                .listStyle(.bordered)
+                .frame(minHeight: 140, maxHeight: 200)
 
-                // what the selection means, and what you can do with it
-                if !chosen.isEmpty {
-                    HStack(spacing: 10) {
+                Divider()
+                // the footer: Add / Remove / Edit / Test, labelled
+                HStack(spacing: 2) {
+                    Button {
+                        sheet = kind == .nas ? .createSMB : .oneDrive
+                    } label: { Label("Add…", systemImage: "plus") }
+
+                    Button {
+                        confirmDelete = true
+                    } label: { Label("Remove", systemImage: "minus") }
+                    .disabled(chosen.isEmpty)
+
+                    if kind == .nas {
+                        Divider().frame(height: 16).padding(.horizontal, 4)
                         Button {
-                            runTest()
-                        } label: { Label("Test Connection", systemImage: "bolt") }
-                        .disabled(testing)
-
-                        if kind == .nas && info["type"] == "smb" {
-                            Button {
-                                formName = chosen
-                                formHost = info["host"] ?? ""
-                                formUser = info["user"] ?? ""
-                                formPass = ""
-                                editing = true
-                                creating = true
-                            } label: { Label("Edit…", systemImage: "pencil") }
-                        }
-
-                        Button(role: .destructive) {
-                            confirmDelete = true
-                        } label: { Label("Delete…", systemImage: "trash") }
-
-                        Spacer()
+                            sheet = .editSMB(name: chosen,
+                                             host: info["host"] ?? "",
+                                             user: info["user"] ?? "")
+                        } label: { Label("Edit…", systemImage: "pencil") }
+                        .disabled(chosen.isEmpty || info["type"] != "smb")
                     }
-                    if let t = testResult, !t.ok {
-                        Text(t.detail)
-                            .font(.caption)
-                            .foregroundStyle(.red)
-                            .lineLimit(2)
-                    }
+
+                    Divider().frame(height: 16).padding(.horizontal, 4)
+                    Button {
+                        runTest()
+                    } label: { Label("Test", systemImage: "bolt") }
+                    .disabled(chosen.isEmpty || testing)
+
+                    Spacer()
                 }
-            } else {
-                Text(kind == .nas
-                     ? "No NAS connections yet — add one below."
-                     : "No cloud connections yet — sign in below.")
-                    .font(.callout).foregroundStyle(.secondary)
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .padding(6)
+                .background(.quaternary.opacity(0.4))
             }
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.separator))
 
-            DisclosureGroup(
-                kind == .nas
-                    ? (editing ? "Edit \(formName)" : "New SMB connection…")
-                    : "Sign in to OneDrive…",
-                isExpanded: $creating
-            ) {
-                if kind == .nas { smbForm } else { onedriveFlow }
+            if let t = testResult, !t.ok {
+                Text(t.detail)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .lineLimit(2)
             }
-            .onChange(of: creating) { open in
-                if !open { editing = false }
-            }
-
             if let e = error { Text(e).foregroundStyle(.red).font(.callout) }
 
             HStack {
@@ -340,8 +338,6 @@ struct RemotePicker: View {
         .frame(maxWidth: 560)
         .onAppear {
             model.loadRemotes()
-            // FERRY_UI_REMOTE: screenshot scaffolding — preselects a row so the
-            // management UI is capturable without a click. Never set normally.
             if chosen.isEmpty,
                let pre = ProcessInfo.processInfo.environment["FERRY_UI_REMOTE"] {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { select(pre) }
@@ -349,9 +345,28 @@ struct RemotePicker: View {
                 select(chosen)
             }
         }
-        .confirmationDialog("Delete the connection “\(chosen)”?",
+        .sheet(item: $sheet) { mode in
+            switch mode {
+            case .createSMB:
+                SMBSheet(model: model, editingName: nil, host: "", user: NSUserName()) { name in
+                    sheet = nil
+                    if let name { select(name) }
+                }
+            case .editSMB(let name, let host, let user):
+                SMBSheet(model: model, editingName: name, host: host, user: user) { saved in
+                    sheet = nil
+                    if let saved { select(saved) }
+                }
+            case .oneDrive:
+                OneDriveSheet(model: model) { name in
+                    sheet = nil
+                    if let name { select(name) }
+                }
+            }
+        }
+        .confirmationDialog("Remove the connection “\(chosen)”?",
                             isPresented: $confirmDelete) {
-            Button("Delete", role: .destructive) {
+            Button("Remove", role: .destructive) {
                 let name = chosen
                 Task {
                     if let e = await model.deleteRemote(name) {
@@ -364,7 +379,7 @@ struct RemotePicker: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Removes it from this Mac's connection list. Files on the NAS itself are untouched. Ferry refuses to delete a connection the sync pair is using.")
+            Text("Removes it from this Mac's connection list. Files on the NAS itself are untouched. Ferry refuses to remove a connection the sync pair is using.")
         }
     }
 
@@ -372,9 +387,7 @@ struct RemotePicker: View {
         chosen = name ?? ""
         info = [:]; testResult = nil; error = nil
         guard let name, !name.isEmpty else { return }
-        Task {
-            info = await model.remoteInfo(name)
-        }
+        Task { info = await model.remoteInfo(name) }
         runTest()
     }
 
@@ -384,95 +397,149 @@ struct RemotePicker: View {
         let name = chosen
         Task {
             let r = await model.testRemote(name)
-            if chosen == name {           // ignore a stale result after reselect
+            if chosen == name {
                 testResult = r
                 testing = false
             }
         }
     }
+}
 
-    private var smbForm: some View {
-        Form {
-            TextField("Name", text: $formName)
-                .disabled(editing)        // renaming is a delete + create
-            TextField("Host or IP", text: $formHost, prompt: Text("192.168.1.10"))
-            TextField("Username", text: $formUser)
-            SecureField("Password", text: $formPass,
-                        prompt: editing ? Text("leave blank to keep current") : nil)
-            Button {
-                error = nil
-                Task {
-                    let e: String?
-                    if editing {
-                        e = await model.updateSMB(name: formName, host: formHost,
-                                                  user: formUser, password: formPass)
-                    } else {
-                        e = await model.createSMB(name: formName, host: formHost,
-                                                  user: formUser, password: formPass)
-                    }
-                    if let e { error = e } else {
-                        creating = false
-                        select(formName)   // show it selected, tested
-                    }
+// MARK: - connection sheets (create and edit share one form)
+
+struct SMBSheet: View {
+    @ObservedObject var model: StatusModel
+    let editingName: String?          // nil = create
+    @State var host: String
+    @State var user: String
+    let done: (String?) -> Void       // saved name, or nil on cancel
+
+    @State private var name = "nas"
+    @State private var password = ""
+    @State private var busy = false
+    @State private var error: String?
+
+    private var isEdit: Bool { editingName != nil }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(isEdit ? "Edit “\(editingName!)”" : "New SMB Connection")
+                .font(.headline)
+
+            Form {
+                if !isEdit {
+                    TextField("Name", text: $name)
                 }
-            } label: {
-                Label(editing ? "Save Changes" : "Create Connection",
-                      systemImage: editing ? "checkmark" : "plus")
+                TextField("Host or IP", text: $host, prompt: Text("192.168.1.10"))
+                TextField("Username", text: $user)
+                SecureField("Password", text: $password,
+                            prompt: isEdit ? Text("leave blank to keep current") : nil)
             }
-            .disabled(formName.isEmpty || formHost.isEmpty)
-        }
-        .padding(.top, 6)
-        .onAppear { if !editing { formName = "nas"; formHost = ""; formPass = "" } }
-    }
+            .formStyle(.columns)
+            .textFieldStyle(.roundedBorder)
 
-    private var onedriveFlow: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            TextField("Name", text: $odName)
-                .frame(maxWidth: 240)
-            if odDrives.isEmpty {
+            if let e = error { Text(e).foregroundStyle(.red).font(.callout) }
+
+            HStack {
+                Spacer()
+                Button("Cancel") { done(nil) }
+                    .keyboardShortcut(.cancelAction)
                 Button {
-                    error = nil; odBusy = true
+                    busy = true; error = nil
+                    let target = editingName ?? name
                     Task {
-                        let auth = await model.authorizeOneDrive()
-                        guard let token = auth.token else {
-                            error = auth.error; odBusy = false; return
+                        let e: String?
+                        if isEdit {
+                            e = await model.updateSMB(name: target, host: host,
+                                                      user: user, password: password)
+                        } else {
+                            e = await model.createSMB(name: target, host: host,
+                                                      user: user, password: password)
                         }
-                        odToken = token
-                        let r = await model.createOneDrive(name: odName, token: token, drive: nil)
-                        odBusy = false
-                        if r.done { chosen = odName; creating = false }
-                        else if let e = r.error { error = e }
-                        else { odDrives = r.drives }
+                        busy = false
+                        if let e { error = e } else { done(target) }
                     }
                 } label: {
-                    Label(odBusy ? "Waiting for the browser…" : "Sign in with your browser",
-                          systemImage: "person.crop.circle.badge.checkmark")
+                    Label(isEdit ? "Save" : "Create", systemImage: "checkmark")
                 }
-                .disabled(odBusy || odName.isEmpty)
-                if odBusy {
-                    Text("A browser window opens; sign in and approve. Ferry only ever receives the sync token — never your password.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-            } else {
-                Text("Choose which drive:").font(.callout)
-                ForEach(odDrives) { d in
-                    Button {
-                        odBusy = true
-                        Task {
-                            let r = await model.createOneDrive(name: odName, token: odToken,
-                                                               drive: d.driveID)
-                            odBusy = false
-                            if r.done { chosen = odName; creating = false; odDrives = [] }
-                            else { error = r.error ?? "could not set the drive" }
-                        }
-                    } label: {
-                        Label(d.label, systemImage: "internaldrive")
-                    }
-                    .disabled(odBusy)
-                }
+                .keyboardShortcut(.defaultAction)
+                .buttonStyle(.borderedProminent)
+                .disabled(busy || host.isEmpty || (!isEdit && name.isEmpty))
             }
         }
-        .padding(.top, 6)
+        .padding(20)
+        .frame(width: 420)
+    }
+}
+
+struct OneDriveSheet: View {
+    @ObservedObject var model: StatusModel
+    let done: (String?) -> Void
+
+    @State private var name = "onedrive"
+    @State private var busy = false
+    @State private var drives: [StatusModel.Drive] = []
+    @State private var token = ""
+    @State private var error: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Sign in to OneDrive").font(.headline)
+
+            TextField("Name", text: $name)
+                .textFieldStyle(.roundedBorder)
+                .frame(maxWidth: 240)
+
+            if drives.isEmpty {
+                Button {
+                    busy = true; error = nil
+                    Task {
+                        let auth = await model.authorizeOneDrive()
+                        guard let t = auth.token else {
+                            error = auth.error; busy = false; return
+                        }
+                        token = t
+                        let r = await model.createOneDrive(name: name, token: t, drive: nil)
+                        busy = false
+                        if r.done { done(name) }
+                        else if let e = r.error { error = e }
+                        else { drives = r.drives }
+                    }
+                } label: {
+                    Label(busy ? "Waiting for the browser…" : "Sign in with your browser",
+                          systemImage: "person.crop.circle.badge.checkmark")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(busy || name.isEmpty)
+                Text("A browser window opens; sign in and approve. Ferry only ever receives the sync token — never your password.")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else {
+                Text("Choose which drive:").font(.callout)
+                ForEach(drives) { d in
+                    Button {
+                        busy = true
+                        Task {
+                            let r = await model.createOneDrive(name: name, token: token,
+                                                               drive: d.driveID)
+                            busy = false
+                            if r.done { done(name) }
+                            else { error = r.error ?? "could not set the drive" }
+                        }
+                    } label: { Label(d.label, systemImage: "internaldrive") }
+                    .disabled(busy)
+                }
+            }
+
+            if let e = error { Text(e).foregroundStyle(.red).font(.callout) }
+
+            HStack {
+                Spacer()
+                Button("Cancel") { done(nil) }
+                    .keyboardShortcut(.cancelAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 440)
     }
 }
 
