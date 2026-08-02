@@ -7,7 +7,7 @@
 
 set -eu
 
-VERSION=0.2.1
+VERSION=0.3.0
 
 # ---------------------------------------------------------------- defaults --
 #
@@ -685,6 +685,7 @@ status_porcelain() {
 	printf 'path1=%s\n'       "$PATH1"
 	printf 'path2=%s\n'       "$PATH2"
 	printf 'age_seconds=%s\n' "$age"
+	printf 'state_dir=%s\n'   "$STATE_DIR"
 
 	local k
 	for k in when outcome exit duration copied deleted errors free_bytes used_bytes log; do
@@ -1018,34 +1019,43 @@ cmd_schedule() {
 	esac
 }
 
-# ----------------------------------------------------------------- menubar --
+# --------------------------------------------------------------------- app --
 #
-# A Homebrew formula cannot depend on a cask — the formula DSL accepts only
-# formula names plus :arch/:linux/:macos/:maximum_macos/:xcode. So SwiftBar can
-# never arrive with `brew install ferry`, and this command exists to close that
-# gap explicitly rather than leave it as a README step.
+# Ferry.app is the menu bar indicator: a thin native shell that renders
+# `ferry status --porcelain` and shells out to this script for actions. It is
+# built by `make app` and shipped in share/ferry/ next to this script. This
+# command copies it into ~/Applications and manages its login registration —
+# which only the app itself can perform (SMAppService), so registration is
+# driven by running the app binary with a flag.
 
-SWIFTBAR_APP="/Applications/SwiftBar.app"
-SWIFTBAR_DOMAIN="com.ameba.SwiftBar"
-PLUGIN_NAME="ferry.1m.sh"
+APP_NAME="Ferry.app"
+APP_DEST="${FERRY_APP_DEST:-$HOME/Applications}"
 
-swiftbar_installed() { [ -d "$SWIFTBAR_APP" ]; }
-
-# The plugin ships beside the script when installed (share/ferry/) and inside
-# the checkout during development. Look in both rather than guessing one.
-plugin_source() {
+# Where the built bundle lives: beside the installed script (share/ferry/) or
+# in the checkout during development.
+app_source() {
 	local here
 	here=$(cd "$(dirname "$0")" 2>/dev/null && pwd) || return 1
 	local c
 	for c in \
-		"$here/../share/ferry/$PLUGIN_NAME" \
-		"$here/menubar/$PLUGIN_NAME" \
-		"$here/../menubar/$PLUGIN_NAME"
+		"$here/../share/ferry/$APP_NAME" \
+		"$here/app/.build/$APP_NAME"
 	do
-		[ -f "$c" ] && { printf '%s\n' "$c"; return 0; }
+		[ -d "$c" ] && { printf '%s\n' "$c"; return 0; }
 	done
 	return 1
 }
+
+app_installed() { [ -d "$APP_DEST/$APP_NAME" ]; }
+
+app_binary() { printf '%s\n' "$APP_DEST/$APP_NAME/Contents/MacOS/Ferry"; }
+
+app_running() { pgrep -qx Ferry 2>/dev/null; }
+
+# The SwiftBar plugin this app replaced. Detected so an upgrade never leaves
+# two identical indicators in the menu bar.
+SWIFTBAR_DOMAIN="com.ameba.SwiftBar"
+PLUGIN_NAME="ferry.1m.sh"
 
 # FERRY_SWIFTBAR_DIR exists so the test suite can never reach the real
 # installation. Without it, `ferry uninstall` under test reads the live
@@ -1058,80 +1068,83 @@ swiftbar_plugin_dir() {
 	defaults read "$SWIFTBAR_DOMAIN" PluginDirectory 2>/dev/null
 }
 
-cmd_menubar() {
+remove_swiftbar_plugin() {
+	local dir
+	dir=$(swiftbar_plugin_dir || true)
+	[ -n "$dir" ] && [ -f "$dir/$PLUGIN_NAME" ] || return 1
+	rm -f "$dir/$PLUGIN_NAME"
+	open -g "swiftbar://refreshallplugins" 2>/dev/null || true
+	return 0
+}
+
+cmd_app() {
 	local sub="${1:-status}"
 	[ $# -gt 0 ] && shift
 
 	case "$sub" in
 		install)
-			head_ "menu bar"
-			if ! swiftbar_installed; then
-				info "SwiftBar is what renders the indicator; it is a separate app."
-				info "A Homebrew formula cannot install a cask, so ferry cannot bundle it."
-				printf '\n' >&2
-				if confirm "run 'brew install --cask swiftbar' now?"; then
-					command -v brew >/dev/null 2>&1 || die "brew not found — install SwiftBar manually"
-					brew install --cask swiftbar || die "cask install failed"
-				else
-					die "install it with: brew install --cask swiftbar"
+			head_ "Ferry.app"
+			local src
+			src=$(app_source) || die "cannot find $APP_NAME — was ferry installed with the app built? (make app)"
+
+			mkdir -p "$APP_DEST"
+			# quit a running copy before replacing it under its feet
+			app_running && { osascript -e 'quit app "Ferry"' >/dev/null 2>&1 || true; sleep 1; }
+			rm -rf "${APP_DEST:?}/$APP_NAME"
+			cp -R "$src" "$APP_DEST/$APP_NAME" || die "could not copy to $APP_DEST"
+			ok "installed $APP_DEST/$APP_NAME"
+
+			# never two indicators: offer to retire the SwiftBar plugin
+			local dir
+			dir=$(swiftbar_plugin_dir || true)
+			if [ -n "$dir" ] && [ -f "$dir/$PLUGIN_NAME" ]; then
+				info "the old SwiftBar plugin is still installed at $dir/$PLUGIN_NAME"
+				if confirm "remove it so you don't get two indicators?"; then
+					remove_swiftbar_plugin && ok "SwiftBar plugin removed"
 				fi
 			fi
-			ok "SwiftBar present"
 
-			local src dir
-			src=$(plugin_source) || die "cannot find $PLUGIN_NAME — is ferry installed properly?"
-
-			dir=$(swiftbar_plugin_dir || true)
-			if [ -z "$dir" ]; then
-				dir="$HOME/.local/share/ferry/swiftbar"
-				mkdir -p "$dir"
-				defaults write "$SWIFTBAR_DOMAIN" PluginDirectory -string "$dir" 2>/dev/null \
-					|| die "could not set SwiftBar's plugin directory — set it to $dir in SwiftBar's preferences"
-				ok "set SwiftBar plugin directory to $dir"
+			if [ -t 0 ]; then
+				if confirm "start Ferry.app at login?"; then
+					open "$APP_DEST/$APP_NAME" --args --register-login
+					ok "launched, and asked it to register at login"
+				else
+					open "$APP_DEST/$APP_NAME"
+					ok "launched (no login registration — toggle it in the menu any time)"
+				fi
 			else
-				info "SwiftBar plugin directory: $dir"
-				[ -d "$dir" ] || mkdir -p "$dir"
+				open "$APP_DEST/$APP_NAME"
+				ok "launched"
 			fi
-
-			cp "$src" "$dir/$PLUGIN_NAME" || die "could not write $dir/$PLUGIN_NAME"
-			chmod +x "$dir/$PLUGIN_NAME"
-			ok "installed $dir/$PLUGIN_NAME"
-
-			# SwiftBar has to be running to show anything, and has to be told to
-			# rescan after a plugin appears.
-			open -g "$SWIFTBAR_APP" 2>/dev/null || true
-			open -g "swiftbar://refreshallplugins" 2>/dev/null || true
-			ok "SwiftBar refreshed — look for the ⇄ in your menu bar"
 			;;
 		remove)
-			local dir
-			dir=$(swiftbar_plugin_dir || true)
-			[ -n "$dir" ] || die "SwiftBar has no plugin directory configured"
-			rm -f "$dir/$PLUGIN_NAME"
-			open -g "swiftbar://refreshallplugins" 2>/dev/null || true
-			ok "removed $dir/$PLUGIN_NAME"
+			head_ "Ferry.app"
+			app_installed || { info "not installed"; return 0; }
+			# unregister login FIRST — only the app can do it, and once the
+			# bundle is deleted the registration is an orphan in Settings.
+			"$(app_binary)" --unregister-login >/dev/null 2>&1 || true
+			app_running && { osascript -e 'quit app "Ferry"' >/dev/null 2>&1 || true; sleep 1; }
+			rm -rf "${APP_DEST:?}/$APP_NAME"
+			ok "removed $APP_DEST/$APP_NAME (login registration unregistered)"
 			;;
 		status)
-			head_ "menu bar"
-			if swiftbar_installed; then ok "SwiftBar installed"
-			else bad "SwiftBar not installed — brew install --cask swiftbar"; fi
-			local dir
-			dir=$(swiftbar_plugin_dir || true)
-			if [ -n "$dir" ]; then
-				info "plugin directory: $dir"
-				if [ -f "$dir/$PLUGIN_NAME" ]; then ok "$PLUGIN_NAME installed"
-				else bad "$PLUGIN_NAME not installed — 'ferry menubar install'"; fi
+			head_ "Ferry.app"
+			if app_installed; then
+				ok "installed at $APP_DEST/$APP_NAME"
+				info "version: $(defaults read "$APP_DEST/$APP_NAME/Contents/Info.plist" CFBundleShortVersionString 2>/dev/null || echo '?')"
+				if app_running; then ok "running"; else info "not running — open it or 'ferry app install'"; fi
+				info "login: $("$(app_binary)" --login-status 2>/dev/null || echo unknown)"
 			else
-				info "SwiftBar plugin directory not set — 'ferry menubar install' will set it"
+				info "not installed — 'ferry app install'"
 			fi
-			if plugin_source >/dev/null 2>&1; then
-				info "source: $(plugin_source)"
+			if app_source >/dev/null 2>&1; then
+				info "source: $(app_source)"
 			else
-				bad "cannot find $PLUGIN_NAME to install from"
+				bad "no built $APP_NAME found to install from"
 			fi
 			;;
 		*)
-			die "menubar: unknown subcommand '$sub' (install, remove, status)"
+			die "app: unknown subcommand '$sub' (install, remove, status)"
 			;;
 	esac
 }
@@ -1167,15 +1180,19 @@ cmd_uninstall() {
 		info "no launchd agent installed"
 	fi
 
-	# --- the menu bar plugin ----------------------------------------------
-	local dir
-	dir=$(swiftbar_plugin_dir || true)
-	if [ -n "$dir" ] && [ -f "$dir/$PLUGIN_NAME" ]; then
-		rm -f "$dir/$PLUGIN_NAME"
-		open -g "swiftbar://refreshallplugins" 2>/dev/null || true
-		ok "removed the menu bar plugin ($dir/$PLUGIN_NAME)"
+	# --- the menu bar app --------------------------------------------------
+	if app_installed; then
+		"$(app_binary)" --unregister-login >/dev/null 2>&1 || true
+		app_running && { osascript -e 'quit app "Ferry"' >/dev/null 2>&1 || true; sleep 1; }
+		rm -rf "${APP_DEST:?}/$APP_NAME"
+		ok "removed $APP_DEST/$APP_NAME (login registration unregistered)"
 	else
-		info "no menu bar plugin installed"
+		info "no Ferry.app installed"
+	fi
+
+	# --- the retired SwiftBar plugin, if one is still around ---------------
+	if remove_swiftbar_plugin; then
+		ok "removed the old SwiftBar plugin"
 	fi
 
 	# --- config and state: data, not integration --------------------------
@@ -1233,7 +1250,7 @@ usage() {
 
 	SCHEDULE
 	  ferry schedule install|remove|status
-	  ferry menubar install|remove|status   SwiftBar menu bar indicator
+	  ferry app install|remove|status       Ferry.app menu bar indicator
 
 	REMOVE
 	  ferry uninstall [--purge] remove the launchd agent and menu bar plugin.
@@ -1268,7 +1285,7 @@ main() {
 		resync)   cmd_resync "$@" ;;
 		attic)    cmd_attic "$@" ;;
 		schedule) cmd_schedule "$@" ;;
-		menubar)  cmd_menubar "$@" ;;
+		app)      cmd_app "$@" ;;
 		uninstall) cmd_uninstall "$@" ;;
 		*) usage; die "unknown command '$cmd'" ;;
 	esac

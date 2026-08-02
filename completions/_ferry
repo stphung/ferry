@@ -12,7 +12,7 @@ _ferry() {
         'resync:establish or re-establish the pair'
         'attic:list, restore or prune deleted files'
         'schedule:install, remove or inspect the launchd job'
-        'menubar:install, remove or inspect the SwiftBar indicator'
+        'app:install, remove or inspect the Ferry.app indicator'
         'uninstall:remove the launchd agent and menu bar plugin'
     )
 
@@ -44,8 +44,8 @@ _ferry() {
                 schedule)
                     _values 'schedule command' install remove status
                     ;;
-                menubar)
-                    _values 'menubar command' install remove status
+                app)
+                    _values 'app command' install remove status
                     ;;
                 status)
                     _arguments '--porcelain[key=value on stdout, for scripting]'

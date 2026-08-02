@@ -108,89 +108,59 @@ success is silent.
 ## Menu bar
 
 ```sh
-ferry menubar install
+ferry app install
 ```
 
-Puts a `⇄ 2h  12↑ 3↓` indicator in the menu bar: icon, time since the last successful
-sync, and what the last run moved. The dropdown carries the detail and the safe actions —
-sync now, dry run, check, doctor, open the latest log.
+Installs **Ferry.app** into `~/Applications`: a native menu bar indicator showing the
+symbol for the pair's state plus the age of the last successful sync and what it moved.
+The dropdown carries the detail and the safe actions — sync now, dry run, check, doctor,
+open the latest log — plus a Start-at-Login toggle.
 
-It goes **amber past twice your sync interval**, even when nothing has failed. That is the
-case worth catching: an unloaded launchd job or a Mac left asleep produces no error at
-all, it just quietly stops syncing.
+The app is a *thin shell over the CLI*. It renders `ferry status --porcelain` and shells
+out to `ferry` for actions; all logic, config and safety rails stay in the one script. It
+never syncs on its own timer — launchd owns the schedule — and never touches the network.
+It watches the state directory, so the icon updates within milliseconds of a sync
+finishing, with a one-minute fallback tick.
 
-Two things it deliberately does not do. **`resync` opens a Terminal rather than running** —
-it decides which side is truth and must keep its confirmation. And it **never touches the
-network**: at a one-minute refresh, polling the cloud would be ~1,400 API calls a day to
-decorate a menu, so `ferry sync` records headroom while it is already connected and the
-menu shows it as of that run.
+State is carried by symbol shape (menu bar labels render monochrome):
 
-> SwiftBar renders it, and it is a separate application. A Homebrew formula **cannot**
-> depend on a cask, so `brew install stphung/tap/ferry` can never install it —
-> `ferry menubar install` offers to run `brew install --cask swiftbar` for you.
+| state | symbol |
+|---|---|
+| healthy | `⇆` + age and counts |
+| syncing | circular arrows |
+| stale (>2× interval) | clock with a badge |
+| failed | warning triangle |
+| blocked | octagon |
+| not yet established | dashed circle + `setup` |
 
-Scripting against ferry uses the same interface the plugin does:
+Two deliberate restraints, same as ever: **resync opens a Terminal** — it decides which
+side is truth and keeps its confirmation — and cloud headroom is shown *as of the last
+sync*, recorded while ferry was already connected.
 
-```console
-$ ferry status --porcelain
-state=ok
-age_seconds=7245
-copied=12
-deleted=3
-free_bytes=101370920140
-...
-```
-
-`key=value` on stdout, human report on stderr. `state` is one of `syncing`, `blocked`,
-`unestablished`, `never`, `failed`, `stale`, `ok` — in that order of precedence.
-
-## When it stops
-
-A two-way mirror sometimes needs a human, and `ferry` is built to stop rather than guess.
-When it does, `~/.local/state/ferry/blocked` appears, `ferry status` shows it, and every
-`ferry sync` refuses until it's resolved. Two causes:
-
-**Too many deletes.** More than `MAX_DELETE` percent of files were about to disappear.
-This is the rail working. Read the log, decide whether the deletions are real, then
-`ferry resync`.
-
-**Lost state.** bisync can no longer tell a deletion from a file it has never seen.
-Re-establishing means choosing which side is truth:
-
-```sh
-ferry resync                  # the NAS wins where they differ (default)
-ferry resync --mode path2     # OneDrive wins
-ferry resync --mode newer     # the newer file wins, per file
-```
-
-## Recovering a deleted file
-
-```sh
-ferry attic list                  # dated directories, with sizes
-ferry attic restore 2026-08-01    # copy that day's files back, never overwriting
-ferry attic prune                 # drop anything past ATTIC_KEEP_DAYS
-```
+The app is built from source at install (SwiftPM; every Homebrew user has the CLT), so
+there is no Gatekeeper friction and no signing requirement. Uninstalling ferry removes
+the app and its login registration too.
 
 ## Uninstalling
 
 ```sh
-ferry uninstall          # FIRST — removes the launchd agent and the menu bar plugin
+ferry uninstall          # FIRST — removes the launchd agent and Ferry.app
 brew uninstall ferry     # then the program itself
 ```
 
 **Order matters, and Homebrew cannot do the first step for you.** Formulae have no
 uninstall hook — that is a cask-only feature — so `brew uninstall ferry` deletes the
-Cellar and nothing else. The launchd agent and the SwiftBar plugin live outside it and
-would be left behind: the agent retrying a binary that no longer exists, every interval,
-indefinitely.
+Cellar and nothing else. The launchd agent and Ferry.app live outside it and would be
+left behind: the agent retrying a binary that no longer exists, every interval,
+indefinitely, and an app whose login registration points at nothing.
 
 Configuration and state are **kept** by default, because they are data rather than
 integration. `ferry uninstall --purge` removes those too — but that discards the bisync
 listings, so a later reinstall could only re-establish the pair with a full `resync`,
 which resurrects any deletion made in the meantime. It refuses to run unattended.
 
-If the plugin does get orphaned it says so rather than breaking: the indicator turns to
-`⇄ gone` and offers the reinstall.
+If the app does get orphaned it says so rather than breaking: the indicator turns to a
+question mark and its menu offers the reinstall.
 
 ## Configuration
 

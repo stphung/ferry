@@ -56,7 +56,7 @@ setup() {
     work=$(mktemp -d)
     p1="$work/nas"; p2="$work/cloud"; attic="$work/attic"; state="$work/state"
     conf="$work/config"
-    mkdir -p "$p1" "$p2" "$attic" "$state" "$work/swiftbar"
+    mkdir -p "$p1" "$p2" "$attic" "$state" "$work/swiftbar" "$work/apps"
     cat > "$conf" <<-EOF
 	PATH1=$p1
 	PATH2=$p2
@@ -89,7 +89,7 @@ seed() {
 # run ferry with the test config, capturing stdout, stderr and status
 run() {
     out=$(FERRY_CONFIG="$conf" FERRY_STATE_DIR="$state" FERRY_PLIST="$work/ferry.plist" \
-        FERRY_SWIFTBAR_DIR="$work/swiftbar" \
+        FERRY_SWIFTBAR_DIR="$work/swiftbar" FERRY_APP_DEST="$work/apps" \
         "$FERRY" "$@" 2>"$work/err")
     status=$?
     err=$(cat "$work/err")
@@ -504,6 +504,7 @@ expect_eq "23b nothing goes to stderr" "" "$err"
 expect_contains "23c state is reported" "state=" "$out"
 expect_contains "23d the pair is reported established" "established=1" "$out"
 expect_contains "23e paths are reported" "path1=$p1" "$out"
+expect_contains "23e2 state_dir is reported (the app watches it)" "state_dir=$state" "$out"
 # every line must be key=value, or the plugin's sed parser silently misreads
 bad_lines=$(printf '%s\n' "$out" | grep -vc '^[a-z_0-9]*=' || true)
 expect_eq "23f every line is key=value" "0" "$bad_lines"
@@ -560,41 +561,6 @@ expect_contains "25b and the block flag is set" "blocked=1" "$out"
 teardown
 }
 
-# 26. The plugin renders from porcelain alone and never touches the network
-test_26_menubar_plugin_renders() {
-setup
-seed 3
-establish
-run sync
-plugin=$(cd -- "$(dirname -- "$0")/.." && pwd)/menubar/ferry.1m.sh
-if [ ! -x "$plugin" ]; then
-    no "26a plugin is executable" "not found or not executable: $plugin"
-    teardown; return
-fi
-ok "26a plugin is executable"
-out=$(FERRY_BIN="$FERRY" FERRY_CONFIG="$conf" FERRY_STATE_DIR="$state" "$plugin" 2>"$work/err")
-expect_contains "26b title carries the sync glyph" "⇄" "$out"
-expect_contains "26c a separator starts the dropdown" "---" "$out"
-expect_contains "26d sync is offered" "Sync now" "$out"
-expect_contains "26e resync opens a Terminal, never one click" \
-    "param1=resync terminal=true" "$out"
-expect_not_contains "26f resync is never run headlessly" \
-    "param1=resync terminal=false" "$out"
-teardown
-}
-
-# 27. Filename encodes SwiftBar's refresh interval; renaming it silently
-#     changes how often the indicator updates
-test_27_plugin_refresh_interval() {
-setup
-plugin=$(cd -- "$(dirname -- "$0")/.." && pwd)/menubar/ferry.1m.sh
-case $(basename "$plugin") in
-    ferry.1m.sh) ok "27a plugin refreshes every minute" ;;
-    *) no "27a plugin refreshes every minute" "unexpected name: $(basename "$plugin")" ;;
-esac
-teardown
-}
-
 
 # 28. uninstall removes the integrations and keeps the data. Homebrew has no
 #     uninstall hook for formulae, so an orphaned launchd agent would otherwise
@@ -641,21 +607,54 @@ expect_contains "29g it warned about losing the listings" "resync" "$err"
 teardown
 }
 
-# 30. The plugin must render when ferry has been uninstalled from under it —
-#     SwiftBar keeps running the leftover file every minute regardless.
-test_30_plugin_survives_missing_ferry() {
-setup
-plugin=$(cd -- "$(dirname -- "$0")/.." && pwd)/menubar/ferry.1m.sh
-out=$(FERRY_BIN="$work/no-such-ferry" "$plugin" 2>/dev/null)
-expect_contains "30a it reports ferry is gone" "not installed" "$out"
-expect_contains "30b the title shows it" "gone" "$out"
-expect_contains "30c it offers the reinstall" "brew install stphung/tap/ferry" "$out"
-expect_not_contains "30d and offers no actions that would fail" "param1=sync" "$out"
 
-# a path that exists but is not executable must be treated the same way
-touch "$work/not-exec"
-out=$(FERRY_BIN="$work/not-exec" "$plugin" 2>/dev/null)
-expect_contains "30e a non-executable ferry counts as missing" "not installed" "$out"
+# 30. The app subcommand: status is honest with nothing installed, unknown
+#     subcommands fail loudly, remove of nothing is quiet.
+test_30_app_subcommand() {
+setup
+run app status
+expect_status "30a app status works with nothing installed" 0
+expect_contains "30b it reports not installed" "not installed" "$err"
+
+run app wibble
+expect_status "30c unknown subcommand fails" 1
+expect_contains "30d and names itself" "wibble" "$err"
+
+run app remove
+expect_status "30e remove of nothing succeeds quietly" 0
+expect_contains "30f and says so" "not installed" "$err"
+teardown
+}
+
+# 31. app install copies the bundle into APP_DEST (sandboxed), retires the old
+#     SwiftBar plugin, and ferry uninstall takes the app with it. Uses a stub
+#     bundle: the real one needs a Swift build, which is CI's `make app` step.
+test_31_app_install_lifecycle() {
+setup
+fakesrc=$(cd -- "$(dirname -- "$FERRY")" && pwd)/app/.build/Ferry.app
+had_real=0
+[ -d "$fakesrc" ] && had_real=1
+if [[ $had_real -eq 0 ]]; then
+    mkdir -p "$fakesrc/Contents/MacOS"
+    printf '#!/bin/sh\nexit 0\n' > "$fakesrc/Contents/MacOS/Ferry"
+    chmod +x "$fakesrc/Contents/MacOS/Ferry"
+fi
+mkdir -p "$work/apps"
+printf 'stub plugin\n' > "$work/swiftbar/ferry.1m.sh"
+
+# headless install: no login prompt path; `open` on a stub fails silently
+FERRY_CONFIG="$conf" FERRY_STATE_DIR="$state" FERRY_PLIST="$work/ferry.plist" \
+    FERRY_SWIFTBAR_DIR="$work/swiftbar" FERRY_APP_DEST="$work/apps" \
+    "$FERRY" app install < /dev/null >/dev/null 2>&1
+expect_file "31a the bundle was copied" "$work/apps/Ferry.app/Contents/MacOS/Ferry"
+
+FERRY_CONFIG="$conf" FERRY_STATE_DIR="$state" FERRY_PLIST="$work/ferry.plist" \
+    FERRY_SWIFTBAR_DIR="$work/swiftbar" FERRY_APP_DEST="$work/apps" \
+    "$FERRY" uninstall >/dev/null 2>&1
+expect_no_file "31b ferry uninstall removes the app" "$work/apps/Ferry.app"
+expect_no_file "31c and retires the old SwiftBar plugin" "$work/swiftbar/ferry.1m.sh"
+
+[[ $had_real -eq 0 ]] && rm -rf "$fakesrc"
 teardown
 }
 

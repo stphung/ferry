@@ -1,0 +1,13 @@
+{
+  "": {
+    "dependencies": "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/Ferry.d",
+    "object": "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/Ferry.o",
+    "swift-dependencies": "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/primary.swiftdeps"
+  },
+  "/Users/stphung/workspace/ferry/app/Sources/Ferry/FerryApp.swift": {
+    "object": "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/FerryApp.swift.o",
+    "swiftmodule": "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/FerryApp~partial.swiftmodule",
+    "swift-dependencies": "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/FerryApp.swiftdeps",
+    "diagnostics": "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/FerryApp.dia"
+  }
+}

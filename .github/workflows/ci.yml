@@ -19,6 +19,8 @@ jobs:
         run: make check-version
       - name: Tests
         run: make test
+      - name: Build Ferry.app
+        run: make app
 
   lint:
     # Blocking. There are no findings to triage — the codebase is clean, and

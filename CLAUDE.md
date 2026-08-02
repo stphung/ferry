@@ -8,8 +8,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 `rclone bisync` whose real content is the set of safety decisions around that command,
 plus a setup wizard so a new Mac needs no rclone knowledge.
 
-The whole tool is one file: `ferry`, bash, targeting **bash 3.2** (what macOS ships).
-Nothing is sourced.
+The CLI is one file: `ferry`, bash, targeting **bash 3.2** (what macOS ships). Nothing
+is sourced. `app/` holds Ferry.app, a ~350-line SwiftUI menu bar shell over the CLI —
+it renders `ferry status --porcelain` and shells out for actions. The porcelain contract
+is the API boundary between them; all logic stays in the script.
 
 Design centre: the four things the user actually does are **configure, preview, run,
 schedule**. `ferry --help` is grouped by exactly those, and any new command should belong
@@ -104,16 +106,39 @@ exists — a local path is a valid side and has no `listremotes` entry.
 Tests override `FERRY_CONFIG`, `FERRY_STATE_DIR` and `FERRY_PLIST` so nothing touches the
 real config, state, or `~/Library/LaunchAgents`.
 
-80 assertions across 22 groups. Groups 9 (max-delete blocks the pair), 12 (check-access
+121 assertions across 29 groups. Groups 9 (max-delete blocks the pair), 12 (check-access
 guards an empty side) and 22 (a commented config value still arms the rail) are the ones
 covering the rails that matter most; if any starts failing, stop and understand why before
-changing anything else.
+changing anything else. The suite also sandboxes `FERRY_SWIFTBAR_DIR` and
+`FERRY_APP_DEST` — both exist because a missing override once let the suite delete the
+developer's real installation.
 
 Group 22 exists because of a real bug: `ferry setup` writes
 `MAX_DELETE=5          # PERCENT of files`, and the original parser took everything after
 the `=` as the value. The rail was silently disarmed by the tool's own output. The parser
 now strips inline comments (only when preceded by whitespace, so paths containing `#`
 survive) and trims padding from both key and value.
+
+## Ferry.app
+
+Built by `make app`: SwiftPM produces the binary, the bundle is assembled by hand
+(Info.plist.in + codesign -s -) because this machine may have only the CLT — no
+xcodebuild. `ferry app install` copies it to ~/Applications (FERRY_APP_DEST overrides,
+which is how the test suite stays sandboxed) and drives login registration by running
+the app binary with --register-login / --unregister-login — SMAppService can only be
+called from inside the app.
+
+Two hard-won facts:
+
+- **`model.start()` must hang off the MenuBarExtra LABEL, not the menu content.** The
+  label renders immediately; the menu content's onAppear only fires on first click.
+  Hooked to the menu, the model never starts and the title sits on "…" forever.
+- **MenuBarExtra labels render monochrome** — text colour does not survive. State is
+  carried by SF Symbol shape (octagon=blocked, clock=stale, dashed circle=setup...),
+  never by colour.
+
+The app deliberately has no timer-driven sync (launchd owns the schedule), no network
+access, and no one-click resync. Keep it that way.
 
 ## Constraints
 
@@ -126,6 +151,9 @@ survive) and trims padding from both key and value.
 
 ## Deliberately not here
 
+- **The SwiftBar plugin.** v0.2.x shipped `ferry menubar` + a SwiftBar plugin; v0.3.0
+  replaced both with Ferry.app and removed them. `ferry app install` still detects and
+  offers to retire a leftover plugin so two indicators never coexist.
 - **`consolidate`.** Comparing a folder's contents against the paired tree is
   [`salvage`](https://github.com/stphung/salvage)'s job and it does it better; duplicating
   its rmlint/jq set-difference here was considered and rejected. `doctor` reports cloud

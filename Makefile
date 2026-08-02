@@ -14,7 +14,7 @@ BASHDIR  = $(DESTDIR)$(PREFIX)/share/bash-completion/completions
 SHAREDIR = $(DESTDIR)$(PREFIX)/share/ferry
 
 .DEFAULT_GOAL := help
-.PHONY: help install uninstall link unlink test list-tests lint lint-tools deps check-version dist hooks unhooks
+.PHONY: help install uninstall link unlink test list-tests lint lint-tools deps check-version dist hooks unhooks app app-clean
 
 T ?=
 
@@ -30,7 +30,13 @@ install: ## Copy ferry, its man page and completions into PREFIX
 	install -m 0644 doc/ferry.1            $(MANDIR)/ferry.1
 	install -m 0644 completions/_ferry     $(ZSHDIR)/_ferry
 	install -m 0644 completions/ferry.bash $(BASHDIR)/ferry
-	install -m 0755 menubar/ferry.1m.sh    $(SHAREDIR)/ferry.1m.sh
+	@if [ -d $(APP_BUNDLE) ]; then \
+		rm -rf $(SHAREDIR)/Ferry.app; \
+		cp -R $(APP_BUNDLE) $(SHAREDIR)/Ferry.app; \
+		printf '  installed Ferry.app into %s\n' '$(SHAREDIR)'; \
+	else \
+		printf '  (Ferry.app not built — run make app first if you want it)\n'; \
+	fi
 	@printf '\ninstalled to %s\n' '$(PREFIX)'
 	@case ":$$PATH:" in *":$(PREFIX)/bin:"*) ;; \
 		*) printf '\n  NOTE: %s/bin is not on your PATH. Add:\n    export PATH="%s/bin:$$PATH"\n' '$(PREFIX)' '$(PREFIX)' ;; \
@@ -56,7 +62,7 @@ test: ## Run the suite; T="5 9" runs groups, T="-k conflict" filters by name
 list-tests: ## List the test groups
 	@./tests/run.sh -l
 
-SHELL_FILES = ferry tests/run.sh menubar/ferry.1m.sh
+SHELL_FILES = ferry tests/run.sh
 
 # One entry point for static analysis, run byte-identically here and in CI.
 # Suppressions live in .shellcheckrc, not on this command line, so there is
@@ -100,6 +106,27 @@ unhooks: ## Disable the committed git hooks
 	@git config --unset core.hooksPath || true
 	@printf 'hooks disabled\n'
 
+# The bundle is assembled by hand because this machine (and any brew build)
+# may have only the Command Line Tools — no xcodebuild. SwiftPM produces the
+# binary; the plist and layout are ours. Ad-hoc signing is enough for a
+# locally built app; there is no Developer ID here.
+APP_BUILD = app/.build/release/Ferry
+APP_BUNDLE = app/.build/Ferry.app
+
+app: ## Build Ferry.app (SwiftPM + hand-assembled bundle)
+	@command -v swift >/dev/null 2>&1 || { printf 'swift not found — install the Xcode Command Line Tools\n' >&2; exit 1; }
+	swift build -c release --package-path app
+	@rm -rf $(APP_BUNDLE)
+	@mkdir -p $(APP_BUNDLE)/Contents/MacOS
+	@v=$$(grep -m1 '^VERSION=' ferry | cut -d= -f2); \
+	sed "s/@VERSION@/$$v/g" app/Info.plist.in > $(APP_BUNDLE)/Contents/Info.plist
+	@cp $(APP_BUILD) $(APP_BUNDLE)/Contents/MacOS/Ferry
+	@codesign --force --sign - $(APP_BUNDLE) 2>/dev/null
+	@printf 'built %s\n' '$(APP_BUNDLE)'
+
+app-clean: ## Remove app build products
+	rm -rf app/.build
+
 deps: ## Verify rclone is present and new enough
 	@command -v rclone >/dev/null 2>&1 || { printf 'rclone not found: brew install rclone\n'; exit 1; }
 	@rclone bisync --help 2>/dev/null | grep -q -- --backup-dir1 \
@@ -116,6 +143,6 @@ check-version: ## VERSION= in ferry must equal the .TH line in doc/ferry.1
 dist: check-version ## Build release artifacts into dist/
 	@rm -rf dist && mkdir -p dist
 	@v=$$(grep -m1 '^VERSION=' ferry | cut -d= -f2); \
-	tar czf dist/ferry-$$v.tar.gz ferry doc completions menubar Makefile README.md LICENSE; \
+	tar czf dist/ferry-$$v.tar.gz ferry doc completions app Makefile README.md LICENSE; \
 	cp ferry dist/ferry; \
 	printf 'dist/ferry-%s.tar.gz\n' "$$v"

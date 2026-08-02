@@ -1,4 +1,4 @@
-.TH FERRY 1 "2026-08-01" "ferry 0.2.1" "User Commands"
+.TH FERRY 1 "2026-08-01" "ferry 0.3.0" "User Commands"
 .SH NAME
 ferry \- keep a NAS folder and OneDrive as a two-way mirror, safely
 .SH SYNOPSIS
@@ -82,19 +82,17 @@ Inspect, recover from, or prune the attic of deleted and overwritten files.
 .B schedule install|remove|status
 Manage the launchd job.
 .TP
-.B menubar install|remove|status
-Manage the SwiftBar menu bar indicator. SwiftBar is a separate application: a
-Homebrew formula cannot depend on a cask, so
-.B ferry
-cannot bundle it.
+.B app install|remove|status
+Manage Ferry.app, the native menu bar indicator. The app is a thin shell over
+this script: it renders
+.B status \-\-porcelain
+and shells out for actions, keeping all logic in one place. It never syncs on
+its own timer (launchd owns the schedule) and never touches the network.
 .B install
-offers to run
-.B brew install \-\-cask swiftbar
-if it is absent, then sets SwiftBar's plugin directory, installs the plugin and
-refreshes it. The indicator reads only local state, once a minute; cloud
-headroom is recorded by
-.B sync
-and shown as of that run.
+copies the bundle into
+.IR ~/Applications ,
+offers login registration, and removes the retired SwiftBar plugin if one is
+found so two indicators never coexist.
 .TP
 .BI uninstall " [\-\-purge] [\-\-yes]"
 Remove the launchd agent and the menu bar plugin. Run this
@@ -174,10 +172,8 @@ One log per run, plus launchd's stdout and stderr.
 .I ~/.local/state/ferry/blocked
 Present when the pair needs a human decision. Its contents explain why.
 .TP
-.I ~/.local/share/ferry/swiftbar/ferry.1m.sh
-The menu bar plugin, when installed. The
-.I 1m
-in the name is SwiftBar's refresh interval.
+.I ~/Applications/Ferry.app
+The menu bar indicator, when installed.
 .TP
 .I ~/Library/LaunchAgents/com.stphung.ferry.plist
 The schedule.

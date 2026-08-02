@@ -1,0 +1,221 @@
+{
+  "builtTestProducts" : [
+
+  ],
+  "copyCommands" : {
+
+  },
+  "explicitTargetDependencyImportCheckingMode" : {
+    "none" : {
+
+    }
+  },
+  "generatedSourceTargetSet" : [
+
+  ],
+  "pluginDescriptions" : [
+
+  ],
+  "swiftCommands" : {
+    "C.Ferry-arm64-apple-macosx-release.module" : {
+      "executable" : "/Library/Developer/CommandLineTools/usr/bin/swiftc",
+      "fileList" : "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/sources",
+      "importPath" : "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Modules",
+      "inputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/stphung/workspace/ferry/app/Sources/Ferry/FerryApp.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/swift-version--1AB21518FC5DEDBE.txt"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/sources"
+        }
+      ],
+      "isLibrary" : false,
+      "moduleName" : "Ferry",
+      "moduleOutputPath" : "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Modules/Ferry.swiftmodule",
+      "objects" : [
+        "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/FerryApp.swift.o"
+      ],
+      "otherArguments" : [
+        "-target",
+        "arm64-apple-macosx13.0",
+        "-whole-module-optimization",
+        "-num-threads",
+        "10",
+        "-serialize-diagnostics",
+        "-O",
+        "-j10",
+        "-DSWIFT_PACKAGE",
+        "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+        "-module-cache-path",
+        "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/ModuleCache",
+        "-parseable-output",
+        "-Xfrontend",
+        "-entry-point-function-name",
+        "-Xfrontend",
+        "Ferry_main",
+        "-parse-as-library",
+        "-swift-version",
+        "5",
+        "-I",
+        "/Library/Developer/CommandLineTools/Library/Developer/Frameworks",
+        "-L",
+        "/Library/Developer/CommandLineTools/Library/Developer/Frameworks",
+        "-plugin-path",
+        "/Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing",
+        "-sdk",
+        "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
+        "-g",
+        "-Xcc",
+        "-isysroot",
+        "-Xcc",
+        "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
+        "-Xcc",
+        "-fPIC",
+        "-Xcc",
+        "-g",
+        "-package-name",
+        "app"
+      ],
+      "outputFileMapPath" : "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/output-file-map.json",
+      "outputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/FerryApp.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Modules/Ferry.swiftmodule"
+        }
+      ],
+      "prepareForIndexing" : false,
+      "sources" : [
+        "/Users/stphung/workspace/ferry/app/Sources/Ferry/FerryApp.swift"
+      ],
+      "tempsPath" : "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build",
+      "wholeModuleOptimization" : true
+    }
+  },
+  "swiftFrontendCommands" : {
+
+  },
+  "swiftTargetScanArgs" : {
+    "Ferry" : [
+      "/Library/Developer/CommandLineTools/usr/bin/swiftc",
+      "-module-name",
+      "Ferry",
+      "-package-name",
+      "app",
+      "-c",
+      "/Users/stphung/workspace/ferry/app/Sources/Ferry/FerryApp.swift",
+      "-I",
+      "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Modules",
+      "-target",
+      "arm64-apple-macosx13.0",
+      "-whole-module-optimization",
+      "-num-threads",
+      "10",
+      "-serialize-diagnostics",
+      "-O",
+      "-j10",
+      "-DSWIFT_PACKAGE",
+      "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+      "-module-cache-path",
+      "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/ModuleCache",
+      "-parseable-output",
+      "-Xfrontend",
+      "-entry-point-function-name",
+      "-Xfrontend",
+      "Ferry_main",
+      "-parse-as-library",
+      "-swift-version",
+      "5",
+      "-I",
+      "/Library/Developer/CommandLineTools/Library/Developer/Frameworks",
+      "-L",
+      "/Library/Developer/CommandLineTools/Library/Developer/Frameworks",
+      "-plugin-path",
+      "/Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing",
+      "-sdk",
+      "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
+      "-g",
+      "-Xcc",
+      "-isysroot",
+      "-Xcc",
+      "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
+      "-Xcc",
+      "-fPIC",
+      "-Xcc",
+      "-g",
+      "-package-name",
+      "app",
+      "-driver-use-frontend-path",
+      "/Library/Developer/CommandLineTools/usr/bin/swiftc"
+    ]
+  },
+  "targetDependencyMap" : {
+    "Ferry" : [
+
+    ]
+  },
+  "testDiscoveryCommands" : {
+
+  },
+  "testEntryPointCommands" : {
+
+  },
+  "traitConfiguration" : {
+    "default" : {
+
+    }
+  },
+  "writeCommands" : {
+    "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/sources" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<sources-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/stphung/workspace/ferry/app/Sources/Ferry/FerryApp.swift"
+        }
+      ],
+      "outputFilePath" : "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/sources"
+    },
+    "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.product/Objects.LinkFileList" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<link-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.build/FerryApp.swift.o"
+        }
+      ],
+      "outputFilePath" : "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/Ferry.product/Objects.LinkFileList"
+    },
+    "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/swift-version--1AB21518FC5DEDBE.txt" : {
+      "alwaysOutOfDate" : true,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<swift-get-version>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Library/Developer/CommandLineTools/usr/bin/swiftc"
+        }
+      ],
+      "outputFilePath" : "/Users/stphung/workspace/ferry/app/.build/arm64-apple-macosx/release/swift-version--1AB21518FC5DEDBE.txt"
+    }
+  }
+}
