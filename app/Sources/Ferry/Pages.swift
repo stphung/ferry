@@ -3,6 +3,13 @@
 
 import SwiftUI
 
+/// Last two path segments — readable at a glance; full value on hover.
+func shortPath(_ p: String) -> String {
+    let parts = p.split(separator: "/")
+    if parts.count <= 2 { return p }
+    return "…/" + parts.suffix(2).joined(separator: "/")
+}
+
 // MARK: - Status
 
 struct StatusPage: View {
@@ -54,12 +61,12 @@ struct StatusPage: View {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 6) {
                         LabeledContent("NAS") {
-                            Text(model.porcelain["path1"]).font(.body.monospaced())
+                            Text(shortPath(model.porcelain["path1"])).font(.body.monospaced())
                                 .lineLimit(1).truncationMode(.middle)
                                 .help(model.porcelain["path1"])
                         }
                         LabeledContent("Cloud") {
-                            Text(model.porcelain["path2"]).font(.body.monospaced())
+                            Text(shortPath(model.porcelain["path2"])).font(.body.monospaced())
                                 .lineLimit(1).truncationMode(.middle)
                                 .help(model.porcelain["path2"])
                         }
@@ -80,10 +87,17 @@ struct StatusPage: View {
                 // guidance when a state needs it
                 if model.state == "blocked" {
                     GroupBox {
-                        Label("A run stopped and will not retry until you decide which side is truth. Read the log below, then use Resync.",
-                              systemImage: "exclamationmark.octagon.fill")
-                            .foregroundStyle(.red)
-                            .padding(6)
+                        VStack(alignment: .leading, spacing: 6) {
+                            if !model.porcelain["blocked_reason"].isEmpty {
+                                Label(model.porcelain["blocked_reason"]
+                                        .replacingOccurrences(of: "ferry: ", with: ""),
+                                      systemImage: "exclamationmark.octagon.fill")
+                                    .foregroundStyle(.red)
+                            }
+                            Text("Ferry will not retry until you decide which side is truth. Read the log, then use Resync.")
+                                .font(.callout)
+                        }
+                        .padding(6)
                     }
                 }
                 if model.state == "unestablished" {
@@ -94,46 +108,62 @@ struct StatusPage: View {
                     }
                 }
 
-                // actions — labelled, always. Routine actions cluster left;
-                // Resync is tinted and separated because it is the one action
-                // here that decides which side is truth; Open Log is a
-                // utility, split off by its own divider.
-                HStack(spacing: 10) {
-                    Button {
-                        model.syncNow()
-                    } label: {
-                        Label(model.syncRunning ? "Syncing…" : "Sync Now",
-                              systemImage: "arrow.triangle.2.circlepath")
+                // actions — labelled, always. When blocked, exactly two
+                // actions lead (understand, then decide); routine actions
+                // otherwise cluster left with Resync weighted apart.
+                if model.state == "blocked" {
+                    HStack(spacing: 10) {
+                        Button {
+                            model.openLog()
+                        } label: { Label("Open Log — see what happened", systemImage: "doc.text") }
+                        .controlSize(.large)
+
+                        Button {
+                            showResync = true
+                        } label: { Label("Resync — decide which side is truth", systemImage: "arrow.triangle.2.circlepath.circle") }
+                        .controlSize(.large)
+                        .buttonStyle(.borderedProminent)
+                        .tint(.orange)
+
+                        Spacer()
                     }
-                    .disabled(model.syncRunning || model.state == "blocked"
-                              || model.state == "unestablished")
+                } else {
+                    HStack(spacing: 10) {
+                        Button {
+                            model.syncNow()
+                        } label: {
+                            Label(model.syncRunning ? "Syncing…" : "Sync Now",
+                                  systemImage: "arrow.triangle.2.circlepath")
+                        }
+                        .disabled(model.syncRunning || model.state == "unestablished")
 
-                    Button {
-                        model.runAction("Dry Run", ["sync", "--dry-run", "--verbose"])
-                    } label: { Label("Dry Run", systemImage: "eye") }
-                    .disabled(model.actionRunning)
+                        Button {
+                            model.runAction("Dry Run", ["sync", "--dry-run", "--verbose"])
+                        } label: { Label("Dry Run", systemImage: "eye") }
+                        .disabled(model.actionRunning)
 
-                    Button {
-                        model.runAction("Check Both Sides", ["check"])
-                    } label: { Label("Check", systemImage: "checkmark.seal") }
-                    .disabled(model.actionRunning)
+                        Button {
+                            model.runAction("Check Both Sides", ["check"])
+                        } label: { Label("Check", systemImage: "checkmark.seal") }
+                        .disabled(model.actionRunning)
 
-                    Divider().frame(height: 20)
+                        Divider().frame(height: 20)
 
-                    Button {
-                        showResync = true
-                    } label: { Label("Resync…", systemImage: "arrow.triangle.2.circlepath.circle") }
-                    .tint(.orange)
+                        Button {
+                            showResync = true
+                        } label: { Label("Resync…", systemImage: "arrow.triangle.2.circlepath.circle") }
+                        .tint(.orange)
 
-                    Spacer(minLength: 10)
-                    Divider().frame(height: 20)
+                        Spacer(minLength: 10)
+                        Divider().frame(height: 20)
 
-                    Button {
-                        model.openLog()
-                    } label: { Label("Open Log", systemImage: "doc.text") }
-                    .disabled(model.porcelain["log"].isEmpty)
+                        Button {
+                            model.openLog()
+                        } label: { Label("Open Log", systemImage: "doc.text") }
+                        .disabled(model.porcelain["log"].isEmpty)
+                    }
+                    .controlSize(.large)
                 }
-                .controlSize(.large)
 
                 // live output of the running/last action, in the same panel
                 if model.actionRunning || !model.actionOutput.isEmpty {
@@ -275,7 +305,10 @@ struct AtticPage: View {
                 .padding(.horizontal, 20)
                 .padding(.top, 12)
 
-            if model.attic.isEmpty {
+            if !model.atticLoaded {
+                ProgressView("Reading the attic…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if model.attic.isEmpty {
                 ContentUnavailableCompat(
                     title: "Attic is empty",
                     detail: "Nothing has been deleted or overwritten by a sync.")
@@ -487,6 +520,10 @@ struct ResyncSheet: View {
                 .font(.headline)
             Text("A resync rebuilds ferry's saved listings. Where the two sides disagree, one wins — permanently. Deletions made since the listings were lost will be undone.")
                 .font(.callout)
+            Label("Anything a later sync replaces or deletes is kept in the Attic for \(model.porcelain["attic_keep_days"]) days — decisions here are recoverable, not destructive.",
+                  systemImage: "archivebox")
+                .font(.callout)
+                .foregroundStyle(.secondary)
             Picker("Winner", selection: $mode) {
                 ForEach(modes, id: \.0) { m in Text(m.0).tag(m.0) }
             }

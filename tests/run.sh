@@ -558,6 +558,8 @@ run sync
 run status --porcelain
 expect_contains "25a a tripped rail reports blocked" "state=blocked" "$out"
 expect_contains "25b and the block flag is set" "blocked=1" "$out"
+expect_contains "25c the headline reason is exposed for the app" "blocked_reason=" "$out"
+expect_contains "25d and names the rail" "aborted" "$out"
 teardown
 }
 

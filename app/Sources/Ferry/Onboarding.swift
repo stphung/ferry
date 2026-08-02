@@ -220,26 +220,46 @@ struct RemotePicker: View {
 
     private var blurb: String {
         kind == .nas
-            ? "Where your files live. Pick a connection rclone already knows, or connect your NAS over SMB."
-            : "The cloud side of the mirror. Pick an existing connection, or sign in to OneDrive."
+            ? "Where your files live. Pick a NAS connection you've already set up, or add one over SMB."
+            : "The cloud side of the mirror. Pick an existing cloud connection, or sign in to OneDrive."
+    }
+
+    /// The NAS step shows network-storage types; the cloud step shows the
+    /// rest. Offering a OneDrive remote as your "NAS" would muddle the roles
+    /// the whole app is built on.
+    private var eligible: [StatusModel.Remote] {
+        let nasTypes = ["smb", "sftp", "nfs", "local", "webdav", "ftp"]
+        return model.remotes.filter {
+            kind == .nas ? nasTypes.contains($0.type) : !nasTypes.contains($0.type)
+        }
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(blurb).foregroundStyle(.secondary)
 
-            if !model.remotes.isEmpty {
-                List(model.remotes, selection: Binding(
+            if !eligible.isEmpty {
+                List(eligible, selection: Binding(
                     get: { chosen.isEmpty ? nil : chosen },
                     set: { chosen = $0 ?? "" })
                 ) { r in
-                    Label("\(r.name)  —  \(r.type)",
-                          systemImage: r.type == "smb" ? "externaldrive.connected.to.line.below" : "cloud")
-                        .tag(r.name)
+                    HStack {
+                        Image(systemName: r.type == "smb"
+                              ? "externaldrive.connected.to.line.below" : "cloud")
+                        Text("\(r.name)  —  \(r.type)")
+                        Spacer()
+                        if chosen == r.name {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(Color.accentColor)
+                        }
+                    }
+                    .tag(r.name)
                 }
                 .frame(minHeight: 120, maxHeight: 180)
             } else {
-                Text("No rclone connections exist yet — create one below.")
+                Text(kind == .nas
+                     ? "No NAS connections yet — add one below."
+                     : "No cloud connections yet — sign in below.")
                     .font(.callout).foregroundStyle(.secondary)
             }
 

@@ -68,6 +68,7 @@ final class StatusModel: ObservableObject {
     @Published var porcelain = Porcelain()
     @Published var activity: [ActivityItem] = []
     @Published var attic: [AtticEntry] = []
+    @Published var atticLoaded = false
     @Published var doctor: [DoctorRow] = []
     @Published var ferryBin: String?
     @Published var loginEnabled = SMAppService.mainApp.status == .enabled
@@ -182,7 +183,8 @@ final class StatusModel: ObservableObject {
     }
 
     func loadAttic() {
-        guard let bin = ferryBin else { return }
+        guard let bin = ferryBin ?? FerryCLI.find() else { atticLoaded = true; return }
+        atticLoaded = false
         Task.detached(priority: .utility) {
             let r = FerryCLI.run(bin, ["attic", "list", "--porcelain"])
             let entries: [AtticEntry] = r.out.split(separator: "\n").compactMap { line in
@@ -190,12 +192,12 @@ final class StatusModel: ObservableObject {
                 guard f.count == 2 else { return nil }
                 return AtticEntry(date: f[0], bytes: f[1])
             }
-            await MainActor.run { self.attic = entries }
+            await MainActor.run { self.attic = entries; self.atticLoaded = true }
         }
     }
 
     func loadDoctor() {
-        guard let bin = ferryBin else { return }
+        guard let bin = ferryBin ?? FerryCLI.find() else { return }
         doctor = []
         Task.detached(priority: .utility) {
             let r = FerryCLI.run(bin, ["doctor", "--porcelain"])

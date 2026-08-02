@@ -7,7 +7,7 @@
 
 set -eu
 
-VERSION=0.5.0
+VERSION=0.5.1
 
 # ---------------------------------------------------------------- defaults --
 #
@@ -822,6 +822,11 @@ status_porcelain() {
 	printf 'attic_keep_days=%s\n' "$ATTIC_KEEP_DAYS"
 	printf 'log_keep=%s\n'    "$LOG_KEEP"
 	printf 'notify=%s\n'      "$NOTIFY"
+	# the first line of the blocked file is the headline reason; the panel
+	# shows it so "blocked" is never a mystery word
+	if [ -f "$BLOCKED" ]; then
+		printf 'blocked_reason=%s\n' "$(head -1 "$BLOCKED")"
+	fi
 
 	local k
 	for k in when outcome exit duration copied deleted errors free_bytes used_bytes log; do
