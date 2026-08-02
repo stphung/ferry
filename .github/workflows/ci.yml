@@ -23,9 +23,11 @@ jobs:
         run: make test
 
   lint:
+    # Blocking. There are no findings to triage — the codebase is clean at
+    # shellcheck's default level, and .shellcheckrc disables both codes for
+    # dynamically dispatched functions so the result does not depend on which
+    # shellcheck version the runner happens to have.
     runs-on: macos-latest
-    # Advisory until the findings are triaged; remove this line once they are.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - run: brew install shellcheck

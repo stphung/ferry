@@ -74,6 +74,6 @@ check-version: ## VERSION= in ferry must equal the .TH line in doc/ferry.1
 dist: check-version ## Build release artifacts into dist/
 	@rm -rf dist && mkdir -p dist
 	@v=$$(grep -m1 '^VERSION=' ferry | cut -d= -f2); \
-	tar czf dist/ferry-$$v.tar.gz ferry doc completions Makefile README.md; \
+	tar czf dist/ferry-$$v.tar.gz ferry doc completions Makefile README.md LICENSE; \
 	cp ferry dist/ferry; \
 	printf 'dist/ferry-%s.tar.gz\n' "$$v"

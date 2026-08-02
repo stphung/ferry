@@ -8,6 +8,13 @@
 # for a registry to keep in sync when adding a group.
 disable=SC2329
 
+# SC2317 — "command appears to be unreachable". The same finding as SC2329,
+# reported by older shellchecks: 0.9/0.10 flag every line inside a dynamically
+# dispatched function, where 0.11 flags the function once. Both codes must be
+# disabled or the result depends on which shellcheck happens to be installed.
+# This is not hypothetical — it turned salvage's CI red for exactly this reason.
+disable=SC2317
+
 # SC2012 — "use find instead of ls". The two uses are over a directory ferry
 # owns and populates itself, with names it generates (timestamps and ISO dates).
 # find here would be less readable for no gain in correctness.
