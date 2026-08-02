@@ -267,6 +267,15 @@ struct ActionOutput: View {
                 HStack {
                     Text(model.actionTitle).font(.headline)
                     if model.actionRunning { ProgressView().controlSize(.small) }
+                    if model.actionRunning, let start = model.actionStarted {
+                        // liveness independent of output: a listing phase can
+                        // be silent for many minutes and still be healthy
+                        TimelineView(.periodic(from: start, by: 1)) { _ in
+                            Text("running \(Fmt.age(String(Int(Date().timeIntervalSince(start)))))")
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                     Spacer()
                     if let code = model.actionExit {
                         Label(code == 0 ? "Succeeded" : "Failed (exit \(code))",

@@ -82,6 +82,7 @@ final class StatusModel: ObservableObject {
     @Published var actionRunning = false
     @Published var actionExit: Int32?
     @Published var actionTruncated = false
+    @Published var actionStarted: Date?
 
     // output arrives on the pipe thread and is flushed to the UI in batches —
     // per-line @Published updates froze the app on chatty commands (a check
@@ -184,6 +185,7 @@ final class StatusModel: ObservableObject {
         actionExit = nil
         actionRunning = true
         actionTruncated = false
+        actionStarted = Date()
         shownLines = []
         pendingLock.lock(); pendingLines = []; pendingLock.unlock()
 

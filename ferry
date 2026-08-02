@@ -7,7 +7,7 @@
 
 set -eu
 
-VERSION=0.7.3
+VERSION=0.7.4
 
 # GUI and launchd contexts (Spotlight, Ferry.app, the scheduled sync) start
 # with a minimal PATH that lacks Homebrew — so rclone "isn't installed" and
@@ -813,7 +813,7 @@ cmd_sync() {
 		--resilient --recover \
 		--create-empty-src-dirs \
 		--log-file "$log" --log-level INFO \
-		--stats 5m --stats-one-line)
+		--stats 30s --stats-one-line)
 
 	[ "$dry" = 1 ] && args="$args
 --dry-run"
@@ -830,10 +830,17 @@ cmd_sync() {
 	IFS="$oldifs"
 
 	info "syncing $PATH1 <-> $PATH2 (log: $log)"
+	# stream the log live: a bisync spends its first long minutes silently
+	# listing both sides, and an invisible run is indistinguishable from a
+	# hung one. tail follows the file rclone writes; killed when rclone exits.
+	: > "$log"
+	tail -f "$log" >&2 &
+	local tailpid=$!
 	set +e
 	rclone "$@"
 	rc=$?
 	set -e
+	kill "$tailpid" 2>/dev/null; wait "$tailpid" 2>/dev/null || true
 
 	local dur=$((SECONDS - start))
 	local copied deleted errors
@@ -1255,7 +1262,7 @@ cmd_resync() {
 		--conflict-resolve newer --conflict-loser num \
 		--create-empty-src-dirs \
 		--log-file "$log" --log-level INFO \
-		--stats 5m --stats-one-line)
+		--stats 30s --stats-one-line)
 	[ "$dry" = 1 ] && args="$args
 --dry-run"
 
@@ -1269,10 +1276,14 @@ cmd_resync() {
 	IFS="$oldifs"
 
 	info "running (log: $log)"
+	: > "$log"
+	tail -f "$log" >&2 &
+	local tailpid=$!
 	set +e
 	rclone "$@"
 	rc=$?
 	set -e
+	kill "$tailpid" 2>/dev/null; wait "$tailpid" 2>/dev/null || true
 
 	if [ "$rc" = 0 ]; then
 		[ "$dry" = 1 ] || rm -f "$BLOCKED"
