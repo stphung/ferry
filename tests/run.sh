@@ -880,6 +880,40 @@ expect_not_contains "39o gone from the config" "[mynas]" "$(cat "$rcconf")"
 teardown
 }
 
+# 40. remote-rename rewrites the section AND chases ferry's own references —
+#     a rename must never strand the configured pair
+test_40_remote_rename() {
+setup
+rcconf="$work/rclone.conf"
+run_rc() {
+    out=$(RCLONE_CONFIG="$rcconf" FERRY_CONFIG="$conf" FERRY_STATE_DIR="$state" \
+        "$FERRY" "$@" 2>"$work/err"); status=$?; err=$(cat "$work/err")
+}
+printf 'pw\n' | RCLONE_CONFIG="$rcconf" FERRY_CONFIG="$conf" FERRY_STATE_DIR="$state" \
+    "$FERRY" remote-create-smb oldname 192.0.2.9 alice >/dev/null 2>&1
+printf 'PATH1=oldname:Vault\nPATH2=%s\nATTIC=oldname:ferry-attic\nNOTIFY=0\n' "$p2" > "$conf"
+
+run_rc remote-rename oldname newname
+expect_status "40a rename succeeds" 0
+expect_contains "40b new section exists" "[newname]" "$(cat "$rcconf")"
+expect_not_contains "40c old section gone" "[oldname]" "$(cat "$rcconf")"
+expect_contains "40d password survived" "pass" "$(cat "$rcconf")"
+expect_contains "40e PATH1 reference chased" "PATH1=newname:Vault" "$(cat "$conf")"
+expect_contains "40f ATTIC reference chased" "ATTIC=newname:ferry-attic" "$(cat "$conf")"
+
+run_rc remote-rename newname 'bad name!'
+expect_status "40g invalid new name rejected" 1
+run_rc remote-rename ghost also
+expect_status "40h missing source rejected" 1
+printf 'pw\n' | RCLONE_CONFIG="$rcconf" FERRY_CONFIG="$conf" FERRY_STATE_DIR="$state" \
+    "$FERRY" remote-create-smb другой 10.0.0.1 2>/dev/null; :
+run_rc remote-rename newname newname2
+expect_status "40i rename to fresh name still fine" 0
+run_rc remote-rename newname2 newname2
+expect_status "40j rename onto itself rejected (already exists)" 1
+teardown
+}
+
 
 # ------------------------------------------------------------------ runner --
 

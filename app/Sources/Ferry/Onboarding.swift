@@ -420,16 +420,16 @@ struct SMBSheet: View {
     @State private var error: String?
 
     private var isEdit: Bool { editingName != nil }
+    private var renaming: Bool { isEdit && name != editingName }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text(isEdit ? "Edit “\(editingName!)”" : "New SMB Connection")
                 .font(.headline)
+                .onAppear { if isEdit { name = editingName! } }
 
             Form {
-                if !isEdit {
-                    TextField("Name", text: $name)
-                }
+                TextField("Name", text: $name)
                 TextField("Host or IP", text: $host, prompt: Text("192.168.1.10"))
                 TextField("Username", text: $user)
                 SecureField("Password", text: $password,
@@ -438,6 +438,12 @@ struct SMBSheet: View {
             .formStyle(.columns)
             .textFieldStyle(.roundedBorder)
 
+            if renaming {
+                Label("Will also rename the connection — any use of “\(editingName!)” in the sync pair is updated automatically.",
+                      systemImage: "arrow.triangle.branch")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             if let e = error { Text(e).foregroundStyle(.red).font(.callout) }
 
             HStack {
@@ -446,25 +452,34 @@ struct SMBSheet: View {
                     .keyboardShortcut(.cancelAction)
                 Button {
                     busy = true; error = nil
-                    let target = editingName ?? name
                     Task {
                         let e: String?
+                        var finalName = name
                         if isEdit {
-                            e = await model.updateSMB(name: target, host: host,
+                            // update fields under the old name first, then
+                            // rename — the rename also chases pair references
+                            e = await model.updateSMB(name: editingName!, host: host,
                                                       user: user, password: password)
+                            if e == nil, renaming {
+                                if let re = await model.renameRemote(old: editingName!, new: name) {
+                                    busy = false; error = re; return
+                                }
+                            } else {
+                                finalName = editingName!
+                            }
                         } else {
-                            e = await model.createSMB(name: target, host: host,
+                            e = await model.createSMB(name: name, host: host,
                                                       user: user, password: password)
                         }
                         busy = false
-                        if let e { error = e } else { done(target) }
+                        if let e { error = e } else { done(finalName) }
                     }
                 } label: {
                     Label(isEdit ? "Save" : "Create", systemImage: "checkmark")
                 }
                 .keyboardShortcut(.defaultAction)
                 .buttonStyle(.borderedProminent)
-                .disabled(busy || host.isEmpty || (!isEdit && name.isEmpty))
+                .disabled(busy || host.isEmpty || name.isEmpty)
             }
         }
         .padding(20)

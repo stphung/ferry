@@ -413,6 +413,17 @@ final class StatusModel: ObservableObject {
         return nil
     }
 
+    func renameRemote(old: String, new: String) async -> String? {
+        guard let bin = ferryBin ?? FerryCLI.find() else { return "ferry not found" }
+        let r = await Task.detached(priority: .utility) {
+            FerryCLI.runWithInput(bin, ["remote-rename", old, new], stdin: "")
+        }.value
+        if r.status != 0 { return r.err.isEmpty ? "could not rename" : r.err }
+        loadRemotes()
+        refresh()   // PATH1/PATH2/ATTIC may have been rewritten
+        return nil
+    }
+
     func mkdir(_ path: String) async -> Bool {
         guard let bin = ferryBin else { return false }
         let r = await Task.detached(priority: .utility) {

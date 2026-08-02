@@ -7,7 +7,7 @@
 
 set -eu
 
-VERSION=0.6.1
+VERSION=0.6.2
 
 # ---------------------------------------------------------------- defaults --
 #
@@ -360,16 +360,16 @@ cmd_remote_show() {
 		case "$line" in
 			\[*\]|"") continue ;;
 		esac
-		local key val
-		key=$(printf '%s' "${line%%=*}" | tr -d ' ')
-		val=$(printf '%s' "${line#*=}" | sed 's/^ *//')
-		case "$key" in
+		local showkey showval
+		showkey=$(printf '%s' "${line%%=*}" | tr -d ' ')
+		showval=$(printf '%s' "${line#*=}" | sed 's/^ *//')
+		case "$showkey" in
 			pass|token|client_secret) continue ;;   # never
 		esac
 		if [ "$porcelain" = 1 ]; then
-			printf '%s\t%s\n' "$key" "$val"
+			printf '%s\t%s\n' "$showkey" "$showval"
 		else
-			printf '  %-12s %s\n' "$key" "$val" >&2
+			printf '  %-12s %s\n' "$showkey" "$showval" >&2
 		fi
 	done
 }
@@ -438,6 +438,42 @@ cmd_remote_update_smb() {
 		rclone config update "$name" pass="$obscured" >/dev/null 2>&1 || die "could not update password"
 	fi
 	ok "updated remote $name:"
+}
+
+# Rename a remote. rclone has no non-interactive rename, but its config is
+# plain INI — the section header is the name. Any ferry config reference to
+# the old name (PATH1/PATH2/ATTIC) is rewritten too: a rename must never
+# strand the pair.
+cmd_remote_rename() {
+	local old="${1:-}" new="${2:-}"
+	[ -n "$old" ] && [ -n "$new" ] || die "remote-rename OLD NEW"
+	case "$new" in
+		*[!a-zA-Z0-9_-]*) die "remote-rename: name may only contain letters, digits, - and _" ;;
+	esac
+	rclone listremotes 2>/dev/null | grep -Fqx "$old:" || die "no remote named '$old'"
+	rclone listremotes 2>/dev/null | grep -Fqx "$new:" && die "a remote named '$new' already exists"
+
+	local rcfile
+	rcfile=$(rclone config file 2>/dev/null | tail -1)
+	[ -f "$rcfile" ] || die "cannot locate the rclone config file"
+	local tmp="$rcfile.tmp.$$"
+	if ! sed "s/^\[$old\]\$/[$new]/" "$rcfile" > "$tmp"; then
+		rm -f "$tmp"
+		die "could not rewrite $rcfile"
+	fi
+	mv "$tmp" "$rcfile" || die "could not replace $rcfile"
+	ok "renamed remote $old: -> $new:"
+
+	# chase the references so the pair keeps working
+	local key val
+	for key in PATH1 PATH2 ATTIC; do
+		eval "val=\$$key"
+		case "$val" in
+			"$old":*)
+				cmd_config_set "$key" "$new:${val#"$old":}"
+				;;
+		esac
+	done
 }
 
 # Directory listing for the wizard's folder pickers. TSV, one name per line.
@@ -1669,6 +1705,7 @@ usage() {
 	  ferry remote-test NAME[:PATH]        is it reachable, right now?
 	  ferry remote-update-smb NAME [--host H] [--user U] [--password-stdin]
 	  ferry remote-delete NAME             refused while the pair uses it
+	  ferry remote-rename OLD NEW          updates PATH1/PATH2/ATTIC references
 	  ferry browse REMOTE:PATH             subdirectories, one per line
 	  ferry mkdir REMOTE:PATH              create a folder
 	  ferry peek REMOTE:PATH               top-level entry count
@@ -1719,6 +1756,7 @@ main() {
 		remote-delete) cmd_remote_delete "$@" ;;
 		remote-test) cmd_remote_test "$@" ;;
 		remote-update-smb) cmd_remote_update_smb "$@" ;;
+		remote-rename) cmd_remote_rename "$@" ;;
 		browse)   cmd_browse "$@" ;;
 		mkdir)    cmd_mkdir "$@" ;;
 		peek)     cmd_peek "$@" ;;
