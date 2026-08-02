@@ -1,0 +1,32 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    # macOS only, deliberately: ferry uses date -v, launchctl and osascript.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install rclone
+        run: brew install rclone
+      - name: Verify dependencies
+        run: make deps
+      - name: Version consistency
+        run: make check-version
+      - name: Syntax
+        run: bash -n ferry && bash -n tests/run.sh
+      - name: Tests
+        run: make test
+
+  lint:
+    runs-on: macos-latest
+    # Advisory until the findings are triaged; remove this line once they are.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew install shellcheck
+      - run: make lint

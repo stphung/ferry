@@ -1,0 +1,146 @@
+.TH FERRY 1 "2026-08-01" "ferry 0.1.0" "User Commands"
+.SH NAME
+ferry \- keep a NAS folder and OneDrive as a two-way mirror, safely
+.SH SYNOPSIS
+.B ferry
+.I command
+.RI [ options ]
+.SH DESCRIPTION
+.B ferry
+wraps
+.BR "rclone bisync" (1)
+in the safety rails a two-way mirror of real data needs, and hides the flags
+behind a handful of commands. It is configured once per machine with
+.B ferry setup
+and thereafter runs unattended under
+.BR launchd .
+.PP
+The NAS side is Path1 and is treated as primary: it is the side that wins by
+default when the pair has to be re-established. OneDrive is Path2.
+.SH COMMANDS
+.TP
+.B setup
+Guided setup. Finds or creates the rclone remotes, asks which folders pair with
+each other, writes the config file, then runs
+.BR doctor .
+Run this first on a new Mac.
+.TP
+.B markers
+Place the
+.B RCLONE_TEST
+marker files that
+.B \-\-check\-access
+requires, one on each side. Shows the top-level entry count of both sides first
+so an empty or half-mounted share is visible before anything is written. Needs a
+terminal unless
+.B \-\-yes
+is given.
+.TP
+.B doctor
+Check every precondition: rclone present and new enough, remotes configured and
+reachable, markers in place, attic not overlapping the synced tree, cloud
+headroom, and whether the pair is established or blocked. Exits non-zero if
+anything fails.
+.TP
+.B check
+Compare both sides with
+.BR "rclone check" .
+Read-only.
+.TP
+.BI sync " [\-n] [\-v]"
+The real run, and what the schedule invokes. Refuses to run if the pair is
+blocked or was never established. Takes a lock so runs cannot stack up.
+.B \-n
+previews without changing anything.
+.TP
+.B status
+Last run and its outcome, whether a run is in progress, whether the pair is
+blocked, and whether the launchd job is loaded.
+.TP
+.BI resync " [\-n] [\-\-mode " mode "] [\-\-yes]"
+Establish or re-establish the pair. This is a decision about which side is
+truth, so it refuses to run without a terminal unless
+.B \-\-yes
+is passed.
+.I mode
+is one of
+.BR path1 " (default, the NAS wins), " path2 ", " newer ", " older ", " larger ", " smaller .
+.TP
+.B attic list|restore \fIDATE\fR [\fIDEST\fR]|prune
+Inspect, recover from, or prune the attic of deleted and overwritten files.
+.TP
+.B schedule install|remove|status
+Manage the launchd job.
+.SH CONFIGURATION
+.B ferry
+reads
+.I ~/.config/ferry/config
+as
+.IR KEY=value ,
+one per line. It is parsed, not sourced: an unrecognised key is an error rather
+than a silent no-op. Override the location with
+.BR FERRY_CONFIG .
+.TP
+.B PATH1
+The NAS side. Default
+.IR unas-vault:Vault .
+.TP
+.B PATH2
+The cloud side. Default
+.IR onedrive: .
+.TP
+.B ATTIC
+Where files deleted or overwritten on Path1 are kept.
+.B Must not be inside PATH1
+\(em an attic inside the synced tree would sync itself to the cloud and
+resurrect every deletion. Default
+.IR unas-vault:ferry-attic .
+.TP
+.B MAX_DELETE
+Abort the run if more than this
+.B percentage
+of files would be deleted. Default 5. rclone's own default is 50.
+.TP
+.B ATTIC_KEEP_DAYS
+Dated attic directories older than this are purged after a successful run.
+Default 90.
+.TP
+.B INTERVAL
+Seconds between scheduled runs. Default 14400 (four hours).
+.TP
+.B TRANSFERS ", " CHECKERS ", " TPSLIMIT ", " RETRIES ", " LOW_LEVEL_RETRIES
+Passed through to rclone. Defaults 8, 16, 10, 3, 10.
+.TP
+.B LOG_KEEP
+Number of run logs retained. Default 30.
+.TP
+.B NOTIFY
+1 to post a macOS notification when a run fails. Default 1.
+.SH FILES
+.TP
+.I ~/.config/ferry/config
+Configuration.
+.TP
+.I ~/.local/state/ferry/workdir
+bisync's saved listings. Deliberately not rclone's default of
+.IR ~/Library/Caches ,
+which macOS may purge \(em losing these forces a full
+.BR resync .
+.TP
+.I ~/.local/state/ferry/logs
+One log per run, plus launchd's stdout and stderr.
+.TP
+.I ~/.local/state/ferry/blocked
+Present when the pair needs a human decision. Its contents explain why.
+.TP
+.I ~/Library/LaunchAgents/com.stphung.ferry.plist
+The schedule.
+.SH EXIT STATUS
+0 on success. 1 for a usage or precondition failure. Otherwise rclone's own
+exit status is passed through.
+.SH SEE ALSO
+.BR rclone (1),
+.BR salvage (1)
+.PP
+https://rclone.org/bisync/ \(em read the Limitations section before trusting a
+two-way mirror with data you cannot lose.

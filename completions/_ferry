@@ -1,0 +1,50 @@
+#compdef ferry
+
+_ferry() {
+    local -a commands
+    commands=(
+        'setup:guided setup on a new Mac'
+        'markers:place the --check-access safety markers'
+        'doctor:check every precondition, including cloud headroom'
+        'check:compare both sides, read-only'
+        'sync:run the guarded two-way sync'
+        'status:last run, pair health, blocked state'
+        'resync:establish or re-establish the pair'
+        'attic:list, restore or prune deleted files'
+        'schedule:install, remove or inspect the launchd job'
+    )
+
+    _arguments -C \
+        '1: :->cmd' \
+        '*:: :->args'
+
+    case $state in
+        cmd) _describe -t commands 'ferry command' commands ;;
+        args)
+            case $words[1] in
+                sync)
+                    _arguments \
+                        '(-n --dry-run)'{-n,--dry-run}'[show what would happen, change nothing]' \
+                        '(-v --verbose)'{-v,--verbose}'[verbose rclone output]'
+                    ;;
+                resync)
+                    _arguments \
+                        '(-n --dry-run)'{-n,--dry-run}'[preview, change nothing]' \
+                        '--yes[skip the confirmation prompt]' \
+                        '--mode[which side wins where they differ]:mode:(path1 path2 newer older larger smaller)'
+                    ;;
+                markers)
+                    _arguments '--yes[skip the confirmation prompt]'
+                    ;;
+                attic)
+                    _values 'attic command' list restore prune
+                    ;;
+                schedule)
+                    _values 'schedule command' install remove status
+                    ;;
+            esac
+            ;;
+    esac
+}
+
+_ferry "$@"

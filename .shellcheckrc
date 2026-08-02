@@ -1,0 +1,14 @@
+# shellcheck configuration for ferry
+#
+# Only structural exemptions live here. Anything shellcheck finds that is a real
+# defect gets fixed in the source, not silenced.
+
+# SC2329 — "function is never invoked". Every test group is discovered at
+# runtime with `declare -F`; that is the design, and it is what removes the need
+# for a registry to keep in sync when adding a group.
+disable=SC2329
+
+# SC2012 — "use find instead of ls". The two uses are over a directory ferry
+# owns and populates itself, with names it generates (timestamps and ISO dates).
+# find here would be less readable for no gain in correctness.
+disable=SC2012

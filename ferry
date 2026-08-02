@@ -1,0 +1,994 @@
+#!/bin/bash
+#
+# ferry — keep a NAS folder and OneDrive as a two-way mirror, safely.
+#
+# One file, no sourcing. Targets bash 3.2 (what macOS ships).
+# Requires rclone >= 1.66 for --backup-dir1/--conflict-resolve.
+
+set -eu
+
+VERSION=0.1.0
+
+# ---------------------------------------------------------------- defaults --
+#
+# Every one of these can be overridden in the config file. Anything else in
+# that file is an error, so a typo is caught rather than silently ignored.
+
+PATH1="unas-vault:Vault"          # the NAS side, and the winner at resync
+PATH2="onedrive:"                 # the cloud side
+ATTIC="unas-vault:ferry-attic"    # must NOT be inside PATH1, see check_attic
+MAX_DELETE=5                      # PERCENT, not a count — verified, see CLAUDE.md
+TRANSFERS=8
+CHECKERS=16
+TPSLIMIT=10
+RETRIES=3
+LOW_LEVEL_RETRIES=10
+INTERVAL=14400                    # launchd StartInterval, seconds (4 hours)
+LOG_KEEP=30                       # log files retained
+ATTIC_KEEP_DAYS=90                # dated attic directories retained
+NOTIFY=1                          # macOS notification on failure
+CHECK_FILENAME=RCLONE_TEST
+
+CONFIG_FILE="${FERRY_CONFIG:-$HOME/.config/ferry/config}"
+STATE_DIR="${FERRY_STATE_DIR:-$HOME/.local/state/ferry}"
+
+# bisync's own default workdir lives under ~/Library/Caches, which macOS is
+# free to purge. Losing it silently costs a full --resync, so we keep our
+# state somewhere durable instead.
+WORKDIR=""                        # resolved after config load
+LOG_DIR=""
+LOCK_DIR=""
+LAST_RUN=""
+BLOCKED=""
+
+LABEL=com.stphung.ferry
+PLIST="${FERRY_PLIST:-$HOME/Library/LaunchAgents/$LABEL.plist}"
+
+# ------------------------------------------------------------------ output --
+
+if [ -t 2 ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-dumb}" != dumb ]; then
+	B=$(printf '\033[1m'); R=$(printf '\033[31m'); G=$(printf '\033[32m')
+	Y=$(printf '\033[33m'); Z=$(printf '\033[0m')
+else
+	B=; R=; G=; Y=; Z=
+fi
+
+die()  { printf '%sferry: %s%s\n' "$R" "$*" "$Z" >&2; exit 1; }
+warn() { printf '%s  ! %s%s\n'    "$Y" "$*" "$Z" >&2; }
+ok()   { printf '%s  ✓%s %s\n'    "$G" "$Z" "$*" >&2; }
+bad()  { printf '%s  ✗%s %s\n'    "$R" "$Z" "$*" >&2; }
+info() { printf '  %s\n' "$*" >&2; }
+head_() { printf '\n%s%s%s\n' "$B" "$*" "$Z" >&2; }
+
+notify() {
+	[ "$NOTIFY" = 1 ] || return 0
+	command -v osascript >/dev/null 2>&1 || return 0
+	# Keep the message on one line and free of quotes AppleScript would choke on.
+	local msg
+	msg=$(printf '%s' "$1" | tr '\n"' '  ')
+	osascript -e "display notification \"$msg\" with title \"ferry\"" >/dev/null 2>&1 || true
+}
+
+# ------------------------------------------------------------------ config --
+
+load_config() {
+	if [ -f "$CONFIG_FILE" ]; then
+		local lineno=0 line key val
+		while IFS= read -r line || [ -n "$line" ]; do
+			lineno=$((lineno + 1))
+			case "$line" in
+				''|'#'*) continue ;;
+			esac
+			case "$line" in
+				*=*) ;;
+				*) die "$CONFIG_FILE:$lineno: not KEY=value: $line" ;;
+			esac
+			key=${line%%=*}
+			val=${line#*=}
+
+			# An inline comment must not become part of the value. Requiring
+			# whitespace before the # keeps it out of paths that contain one.
+			case "$val" in
+				*[[:space:]]#*) val=${val%%[[:space:]]#*} ;;
+			esac
+			# trim surrounding whitespace, then surrounding quotes
+			while :; do
+				case "$val" in
+					[[:space:]]*) val=${val#?} ;;
+					*[[:space:]]) val=${val%?} ;;
+					*) break ;;
+				esac
+			done
+			val=${val%\"}; val=${val#\"}
+			val=${val%\'}; val=${val#\'}
+
+			# Indentation and spaces around the = are formatting, not part of
+			# the key — otherwise "  TPSLIMIT = 0" reads as an unknown setting
+			while :; do
+				case "$key" in
+					[[:space:]]*) key=${key#?} ;;
+					*[[:space:]]) key=${key%?} ;;
+					*) break ;;
+				esac
+			done
+			case "$key" in
+				PATH1|PATH2|ATTIC|MAX_DELETE|TRANSFERS|CHECKERS|TPSLIMIT|\
+				RETRIES|LOW_LEVEL_RETRIES|INTERVAL|LOG_KEEP|ATTIC_KEEP_DAYS|\
+				NOTIFY|CHECK_FILENAME|STATE_DIR)
+					eval "$key=\$val" ;;
+				*)
+					die "$CONFIG_FILE:$lineno: unknown setting '$key'" ;;
+			esac
+		done < "$CONFIG_FILE"
+	fi
+
+	WORKDIR="$STATE_DIR/workdir"
+	LOG_DIR="$STATE_DIR/logs"
+	LOCK_DIR="$STATE_DIR/lock"
+	LAST_RUN="$STATE_DIR/last-run"
+	BLOCKED="$STATE_DIR/blocked"
+
+	[ -n "$PATH1" ] || die "PATH1 is empty"
+	[ -n "$PATH2" ] || die "PATH2 is empty"
+	mkdir -p "$STATE_DIR" "$WORKDIR" "$LOG_DIR"
+}
+
+# The attic receives files bisync would otherwise delete from PATH1. If it sits
+# inside PATH1 it becomes part of the synced tree — every deleted file would be
+# resurrected as an upload, and the attic would grow forever inside OneDrive.
+attic_overlaps() {
+	case "$ATTIC/" in
+		"$PATH1"/*) return 0 ;;
+	esac
+	case "$PATH1/" in
+		"$ATTIC"/*) return 0 ;;
+	esac
+	return 1
+}
+
+# -------------------------------------------------------------------- lock --
+#
+# mkdir is atomic on every filesystem we care about; a plain -f test is not.
+
+lock_acquire() {
+	if mkdir "$LOCK_DIR" 2>/dev/null; then
+		printf '%s\n' "$$" > "$LOCK_DIR/pid"
+		trap lock_release EXIT INT TERM
+		return 0
+	fi
+	local pid=""
+	[ -f "$LOCK_DIR/pid" ] && pid=$(cat "$LOCK_DIR/pid" 2>/dev/null || true)
+	if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+		return 1
+	fi
+	warn "clearing stale lock (pid ${pid:-unknown} is gone)"
+	rm -rf "$LOCK_DIR"
+	lock_acquire
+}
+
+lock_release() { rm -rf "$LOCK_DIR"; }
+
+# ------------------------------------------------------------------- state --
+
+state_set() {
+	# state_set key value ... — rewrites LAST_RUN with the given pairs
+	local tmp="$LAST_RUN.tmp.$$"
+	: > "$tmp"
+	while [ $# -gt 0 ]; do
+		printf '%s=%s\n' "$1" "$2" >> "$tmp"
+		shift 2
+	done
+	mv "$tmp" "$LAST_RUN"
+}
+
+state_get() {
+	[ -f "$LAST_RUN" ] || return 1
+	local v
+	v=$(grep "^$1=" "$LAST_RUN" 2>/dev/null | head -1) || return 1
+	[ -n "$v" ] || return 1
+	printf '%s\n' "${v#*=}"
+}
+
+resync_done() {
+	# bisync writes .lst listings once a resync has established the pair
+	ls "$WORKDIR"/*.lst >/dev/null 2>&1
+}
+
+# ----------------------------------------------------------- rclone helpers --
+
+rclone_common() {
+	printf '%s\n' \
+		--transfers "$TRANSFERS" \
+		--checkers "$CHECKERS" \
+		--tpslimit "$TPSLIMIT" \
+		--retries "$RETRIES" \
+		--low-level-retries "$LOW_LEVEL_RETRIES"
+}
+
+remote_of() { printf '%s\n' "${1%%:*}:"; }
+
+# A local path is a perfectly valid bisync side (the test suite uses two), and
+# has no entry in listremotes. Only paths of the form name:... are remotes.
+is_remote() {
+	case "$1" in
+		/*|.*|'') return 1 ;;
+		*:*) return 0 ;;
+		*) return 1 ;;
+	esac
+}
+
+remote_exists() {
+	is_remote "$1" || return 0
+	rclone listremotes 2>/dev/null | grep -Fqx "$(remote_of "$1")"
+}
+
+# Probes must fail fast. A health check that hangs on an unreachable NAS tells
+# you nothing you didn't already suspect, and blocks the schedule behind it.
+probe() {
+	rclone "$@" --timeout 20s --contimeout 10s --retries 1 --low-level-retries 1
+}
+
+path_reachable() {
+	probe lsf "$1" --max-depth 1 --dirs-only >/dev/null 2>&1
+}
+
+marker_present() {
+	rclone lsf "$1/$CHECK_FILENAME" >/dev/null 2>&1 \
+		&& [ -n "$(rclone lsf "$1/$CHECK_FILENAME" 2>/dev/null)" ]
+}
+
+require_markers() {
+	local p missing=0
+	for p in "$PATH1" "$PATH2"; do
+		marker_present "$p" || { bad "$p/$CHECK_FILENAME missing"; missing=1; }
+	done
+	[ "$missing" = 0 ] || die "run 'ferry markers' once to place the access markers"
+}
+
+# ------------------------------------------------------------------- setup --
+#
+# The whole point of this command: a fresh Mac should need `ferry setup` and
+# nothing else. No remembering rclone subcommands, no hand-written config.
+
+# Prompts go to stderr and the answer to stdout, so callers read it with a
+# plain command substitution instead of eval-assigning a named variable.
+ask() {
+	local prompt=$1 default=${2:-} reply=""
+	if [ -n "$default" ]; then
+		printf '  %s [%s%s%s]: ' "$prompt" "$B" "$default" "$Z" >&2
+	else
+		printf '  %s: ' "$prompt" >&2
+	fi
+	read -r reply || true
+	[ -n "$reply" ] || reply=$default
+	printf '%s\n' "$reply"
+}
+
+confirm() {
+	local reply=""
+	printf '  %s [y/N]: ' "$1" >&2
+	read -r reply || true
+	case "$reply" in y|Y|yes|YES) return 0 ;; *) return 1 ;; esac
+}
+
+remotes_of_type() {
+	# remotes_of_type smb  ->  names of configured remotes with that type
+	rclone listremotes --type "$1" --exact 2>/dev/null | sed 's/:$//'
+}
+
+pick_remote() {
+	# pick_remote "what it is" "expected rclone type" -> chosen name on stdout
+	local what=$1 want=$2 all matching default
+	all=$(rclone listremotes 2>/dev/null | sed 's/:$//')
+	matching=$(remotes_of_type "$want" || true)
+
+	head_ "$what"
+	if [ -n "$matching" ]; then
+		info "configured $want remotes:"
+		printf '%s\n' "$matching" | while IFS= read -r r; do info "  - $r"; done
+	elif [ -n "$all" ]; then
+		info "no $want remote configured yet. all remotes:"
+		printf '%s\n' "$all" | while IFS= read -r r; do info "  - $r"; done
+	else
+		info "no rclone remotes configured yet"
+	fi
+
+	default=$(printf '%s\n' "$matching" | head -1)
+	ask "which remote is the $what? (or 'new')" "$default"
+}
+
+setup_smb_remote() {
+	# creates an SMB remote, prints its name on stdout
+	local name host user obscured plain=""
+	name=$(ask "name for the NAS remote" "unas-vault")
+	host=$(ask "NAS hostname or IP" "")
+	[ -n "$host" ] || die "a hostname is required"
+	user=$(ask "SMB username (blank for guest)" "$(id -un)")
+
+	printf '  SMB password: ' >&2
+	stty -echo 2>/dev/null || true
+	read -r plain || true
+	stty echo 2>/dev/null || true
+	printf '\n' >&2
+
+	obscured=$(printf '%s' "$plain" | rclone obscure - 2>/dev/null) \
+		|| die "could not obscure the password"
+	rclone config create "$name" smb host="$host" user="$user" pass="$obscured" \
+		>/dev/null || die "could not create the remote"
+	ok "created remote $name:"
+	printf '%s\n' "$name"
+}
+
+cmd_setup() {
+	head_ "ferry setup"
+	info "this writes $CONFIG_FILE and checks everything works."
+	info "nothing is synced until you ask for it at the end."
+
+	command -v rclone >/dev/null 2>&1 \
+		|| die "rclone is required first: brew install rclone"
+	ok "rclone $(rclone version 2>/dev/null | head -1 | awk '{print $2}')"
+
+	# --- the NAS side ------------------------------------------------------
+	local nas folder
+	nas=$(pick_remote "NAS (SMB) side" smb)
+	if [ "$nas" = new ] || [ -z "$nas" ]; then
+		nas=$(setup_smb_remote)
+	fi
+	folder=$(ask "folder on $nas: that pairs with the cloud" "Vault")
+
+	# --- the cloud side ----------------------------------------------------
+	local cloud cloudfolder
+	cloud=$(pick_remote "cloud (OneDrive) side" onedrive)
+	if [ "$cloud" = new ] || [ -z "$cloud" ]; then
+		head_ "OneDrive sign-in"
+		info "OneDrive needs a browser sign-in, so rclone's own wizard handles it."
+		info "choose 'n' for new remote, name it 'onedrive', pick storage 'onedrive'."
+		confirm "launch 'rclone config' now?" || die "setup cannot continue without a cloud remote"
+		rclone config
+		cloud=$(pick_remote "cloud (OneDrive) side" onedrive)
+		[ -n "$cloud" ] && [ "$cloud" != new ] || die "no cloud remote was configured"
+	fi
+	cloudfolder=$(ask "folder on $cloud: (blank for the whole drive)" "")
+
+	# --- the attic ---------------------------------------------------------
+	PATH1="$nas:$folder"
+	PATH2="$cloud:$cloudfolder"
+	ATTIC=$(ask "attic for deleted files (must be outside $PATH1)" "$nas:ferry-attic")
+	if attic_overlaps; then
+		die "the attic ($ATTIC) is inside $PATH1 — it would sync itself to the cloud"
+	fi
+
+	# --- schedule ----------------------------------------------------------
+	local hours
+	hours=$(ask "sync every how many hours?" "4")
+	case "$hours" in
+		''|*[!0-9]*) die "hours must be a number" ;;
+	esac
+	INTERVAL=$((hours * 3600))
+
+	# --- write it ----------------------------------------------------------
+	mkdir -p "$(dirname "$CONFIG_FILE")"
+	if [ -f "$CONFIG_FILE" ]; then
+		cp "$CONFIG_FILE" "$CONFIG_FILE.bak"
+		info "existing config backed up to $CONFIG_FILE.bak"
+	fi
+	cat > "$CONFIG_FILE" <<-CONF
+	# ferry — written by 'ferry setup' on $(date +%Y-%m-%d)
+	# Edit freely; unknown settings are rejected rather than ignored.
+
+	PATH1=$PATH1
+	PATH2=$PATH2
+	ATTIC=$ATTIC
+
+	# safety rails
+	MAX_DELETE=$MAX_DELETE          # PERCENT of files; abort above this
+	ATTIC_KEEP_DAYS=$ATTIC_KEEP_DAYS
+
+	# schedule
+	INTERVAL=$INTERVAL        # seconds between runs
+
+	# transfer tuning
+	TRANSFERS=$TRANSFERS
+	CHECKERS=$CHECKERS
+	TPSLIMIT=$TPSLIMIT
+	LOG_KEEP=$LOG_KEEP
+	NOTIFY=$NOTIFY
+	CONF
+	ok "wrote $CONFIG_FILE"
+
+	head_ "checking"
+	if cmd_doctor; then :; fi
+
+	head_ "next"
+	info "1. ${B}ferry markers${Z}      place the safety markers on both sides (once)"
+	info "2. ${B}ferry resync -n${Z}    preview establishing the pair, changing nothing"
+	info "3. ${B}ferry resync${Z}       establish it for real"
+	info "4. ${B}ferry sync -n${Z}      preview a normal run"
+	info "5. ${B}ferry sync${Z}         run it"
+	info "6. ${B}ferry schedule install${Z}  hand it to launchd, every ${hours}h"
+	printf '\n' >&2
+
+	if confirm "run 'ferry markers' now?"; then
+		cmd_markers
+	fi
+}
+
+# ------------------------------------------------------------------ markers --
+#
+# --check-access wants the marker on BOTH sides before it will run anything,
+# including the resync that would otherwise have propagated it. Placing them is
+# therefore a deliberate one-time step, and deliberately not automatic: if the
+# NAS share mounts empty, auto-creating a marker on it is precisely what would
+# let a --mode path1 resync empty the cloud. So we show both sides first.
+
+cmd_markers() {
+	local assume=0
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			--yes) assume=1 ;;
+			*) die "markers: unknown option '$1'" ;;
+		esac
+		shift
+	done
+
+	head_ "access markers"
+	local p n
+	for p in "$PATH1" "$PATH2"; do
+		path_reachable "$p" || die "$p is unreachable — fix that before placing markers"
+		n=$(rclone lsf "$p" --max-depth 1 2>/dev/null | wc -l | tr -d ' ')
+		if [ "$n" = 0 ]; then
+			warn "$p looks EMPTY (0 entries at the top level)"
+		else
+			info "$p — $n top-level entries"
+		fi
+	done
+	printf '\n' >&2
+	info "the marker is what lets bisync tell 'unreachable' from 'you deleted everything'."
+	info "check the counts above look like both sides you expect before continuing."
+	printf '\n' >&2
+
+	if [ "$assume" != 1 ]; then
+		[ -t 0 ] || die "markers needs a human — run it from a terminal (or pass --yes)"
+		printf '  Type %syes%s to place markers: ' "$B" "$Z" >&2
+		local answer=""
+		read -r answer || true
+		[ "$answer" = yes ] || die "aborted"
+	fi
+
+	if marker_present "$PATH1"; then
+		ok "$PATH1/$CHECK_FILENAME already present"
+	else
+		rclone touch "$PATH1/$CHECK_FILENAME" || die "could not write $PATH1/$CHECK_FILENAME"
+		ok "$PATH1/$CHECK_FILENAME created"
+	fi
+
+	# Copy rather than touch the second one. Two independent touches produce two
+	# modification times milliseconds apart, and bisync validates listings by
+	# modtime after a resync — it would abort on its own marker.
+	rclone copyto "$PATH1/$CHECK_FILENAME" "$PATH2/$CHECK_FILENAME" \
+		|| die "could not write $PATH2/$CHECK_FILENAME"
+	ok "$PATH2/$CHECK_FILENAME matches path1"
+}
+
+# --------------------------------------------------------------------- sync --
+
+cmd_sync() {
+	local dry=0 verbose=0
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			-n|--dry-run) dry=1 ;;
+			-v|--verbose) verbose=1 ;;
+			*) die "sync: unknown option '$1'" ;;
+		esac
+		shift
+	done
+
+	if [ -f "$BLOCKED" ]; then
+		printf '%s\n' "$(cat "$BLOCKED")" >&2
+		die "the pair is blocked and needs a decision — see 'ferry status', then 'ferry resync'"
+	fi
+
+	resync_done || die "no bisync state yet — establish the pair with 'ferry resync' first"
+
+	if ! lock_acquire; then
+		info "another ferry run is in progress; nothing to do"
+		return 0
+	fi
+
+	attic_overlaps && die "ATTIC ($ATTIC) is inside PATH1 ($PATH1) — it would sync itself"
+
+	local stamp log day start rc=0
+	stamp=$(date +%Y%m%dT%H%M%S)
+	day=$(date +%Y-%m-%d)
+	log="$LOG_DIR/$stamp.log"
+	start=$SECONDS
+
+	local args
+	args=$(printf '%s\n' \
+		bisync "$PATH1" "$PATH2" \
+		--workdir "$WORKDIR" \
+		--check-access --check-filename "$CHECK_FILENAME" \
+		--max-delete "$MAX_DELETE" \
+		--conflict-resolve newer --conflict-loser num \
+		--backup-dir1 "$ATTIC/$day" \
+		--resilient --recover \
+		--create-empty-src-dirs \
+		--log-file "$log" --log-level INFO \
+		--stats 5m --stats-one-line)
+
+	[ "$dry" = 1 ] && args="$args
+--dry-run"
+	[ "$verbose" = 1 ] && args="$args
+--verbose"
+
+	local oldifs="$IFS"
+	IFS='
+'
+	# IFS is a newline here, so splitting is deliberate: it is what lets paths
+	# containing spaces survive into rclone as single arguments.
+	# shellcheck disable=SC2086,SC2046
+	set -- $args $(rclone_common)
+	IFS="$oldifs"
+
+	info "syncing $PATH1 <-> $PATH2 (log: $log)"
+	set +e
+	rclone "$@"
+	rc=$?
+	set -e
+
+	local dur=$((SECONDS - start))
+	local copied deleted errors
+	copied=$(grep -c ': Copied' "$log" 2>/dev/null || true)
+	deleted=$(grep -c ': Deleted' "$log" 2>/dev/null || true)
+	errors=$(grep -c ' ERROR ' "$log" 2>/dev/null || true)
+	: "${copied:=0}" "${deleted:=0}" "${errors:=0}"
+
+	local outcome
+	if [ "$rc" = 0 ]; then
+		outcome=ok
+	else
+		outcome=failed
+	fi
+
+	state_set \
+		when "$(date +%Y-%m-%dT%H:%M:%S%z)" \
+		outcome "$outcome" \
+		exit "$rc" \
+		duration "$dur" \
+		copied "$copied" \
+		deleted "$deleted" \
+		errors "$errors" \
+		log "$log"
+
+	prune_logs
+
+	if [ "$rc" != 0 ]; then
+		# Distinguish "retry will fix it" from "a human must choose a winner".
+		local reason
+		# Order matters: a max-delete abort also logs a generic bisync error, so
+		# the specific cause has to be tested before the general one.
+		if grep -qi 'too many deletes' "$log" 2>/dev/null; then
+			reason="ferry: aborted — more than ${MAX_DELETE}% of files were about to be deleted.
+This is the safety rail doing its job. Look at the log and confirm the
+deletions are intended before doing anything else.
+Log: $log"
+			printf '%s\n' "$reason" > "$BLOCKED"
+			notify "aborted — too many deletes (>${MAX_DELETE}%)"
+		elif grep -qi 'must run --resync\|cannot find prior\|Bisync critical error' "$log" 2>/dev/null; then
+			reason="ferry: the pair is BLOCKED and will not run again until you resolve it.
+Reason: bisync lost or rejected its saved state, so it cannot tell a deletion
+from a file it has never seen. Re-establishing the pair means choosing which
+side is truth. Run 'ferry resync' when you have looked at both.
+Log: $log"
+			printf '%s\n' "$reason" > "$BLOCKED"
+			notify "BLOCKED — needs 'ferry resync'"
+		else
+			notify "sync failed (exit $rc) — see ferry status"
+		fi
+		bad "sync failed (exit $rc) after ${dur}s — $log"
+		return "$rc"
+	fi
+
+	prune_attic
+	ok "sync ok in ${dur}s — $copied copied, $deleted deleted"
+}
+
+prune_logs() {
+	local n
+	n=$(ls -1 "$LOG_DIR"/*.log 2>/dev/null | wc -l | tr -d ' ')
+	[ -n "$n" ] && [ "$n" -gt "$LOG_KEEP" ] || return 0
+	ls -1 "$LOG_DIR"/*.log 2>/dev/null | sort | head -n $((n - LOG_KEEP)) | while IFS= read -r f; do
+		rm -f "$f"
+	done
+}
+
+prune_attic() {
+	[ "$ATTIC_KEEP_DAYS" -gt 0 ] 2>/dev/null || return 0
+	local cutoff
+	cutoff=$(date -v-"${ATTIC_KEEP_DAYS}"d +%Y-%m-%d 2>/dev/null) || return 0
+	rclone lsf "$ATTIC" --dirs-only 2>/dev/null | sed 's:/$::' | while IFS= read -r d; do
+		case "$d" in
+			[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
+			*) continue ;;
+		esac
+		# ISO dates sort lexically, so string comparison is date comparison
+		if [ "$d" \< "$cutoff" ]; then
+			info "attic: pruning $d (older than $ATTIC_KEEP_DAYS days)"
+			rclone purge "$ATTIC/$d" >/dev/null 2>&1 || warn "attic: could not purge $d"
+		fi
+	done
+}
+
+# ------------------------------------------------------------------- status --
+
+cmd_status() {
+	head_ "ferry $VERSION"
+	info "$PATH1  <->  $PATH2"
+
+	if [ -f "$BLOCKED" ]; then
+		printf '\n%s%s%s\n\n' "$R" "$(cat "$BLOCKED")" "$Z" >&2
+	fi
+
+	head_ "pair"
+	if resync_done; then
+		ok "established ($(ls -1 "$WORKDIR"/*.lst 2>/dev/null | wc -l | tr -d ' ') listings in $WORKDIR)"
+	else
+		bad "not established — run 'ferry resync'"
+	fi
+	if [ -d "$LOCK_DIR" ]; then
+		warn "a run is in progress (pid $(cat "$LOCK_DIR/pid" 2>/dev/null || echo '?'))"
+	fi
+
+	head_ "last run"
+	if [ -f "$LAST_RUN" ]; then
+		local outcome
+		outcome=$(state_get outcome || echo unknown)
+		case "$outcome" in
+			ok)   ok   "$(state_get when)  —  $(state_get duration)s" ;;
+			*)    bad  "$(state_get when)  —  $outcome (exit $(state_get exit))" ;;
+		esac
+		info "copied  $(state_get copied)"
+		info "deleted $(state_get deleted)"
+		info "errors  $(state_get errors)"
+		info "log     $(state_get log)"
+	else
+		info "(never run)"
+	fi
+
+	head_ "schedule"
+	if [ -f "$PLIST" ]; then
+		if launchctl list 2>/dev/null | grep -Fq "$LABEL"; then
+			ok "loaded, every $((INTERVAL / 3600))h"
+		else
+			warn "plist exists but is not loaded — 'ferry schedule install'"
+		fi
+	else
+		info "not installed — 'ferry schedule install'"
+	fi
+	printf '\n' >&2
+}
+
+# ------------------------------------------------------------------- doctor --
+
+cmd_doctor() {
+	local fail=0
+
+	head_ "tools"
+	if command -v rclone >/dev/null 2>&1; then
+		ok "rclone $(rclone version 2>/dev/null | head -1 | awk '{print $2}')"
+	else
+		bad "rclone not found"; fail=1
+	fi
+
+	head_ "config"
+	if [ -f "$CONFIG_FILE" ]; then ok "$CONFIG_FILE"; else info "$CONFIG_FILE (absent — using defaults)"; fi
+	info "state   $STATE_DIR"
+	info "workdir $WORKDIR"
+
+	head_ "remotes"
+	local p
+	for p in "$PATH1" "$PATH2"; do
+		if ! is_remote "$p"; then
+			info "$p (local path, no remote needed)"
+		elif remote_exists "$p"; then
+			ok "$(remote_of "$p") configured"
+		else
+			bad "$(remote_of "$p") not in 'rclone listremotes'"; fail=1
+		fi
+	done
+
+	head_ "reachability"
+	for p in "$PATH1" "$PATH2"; do
+		if path_reachable "$p"; then ok "$p"
+		else bad "$p unreachable"; fail=1; fi
+	done
+
+	head_ "access markers (--check-access)"
+	for p in "$PATH1" "$PATH2"; do
+		if marker_present "$p"; then
+			ok "$p/$CHECK_FILENAME"
+		else
+			bad "$p/$CHECK_FILENAME missing"
+			info "   without it, an empty or unreachable side reads as 'user deleted everything'"
+			fail=1
+		fi
+	done
+
+	head_ "attic"
+	if attic_overlaps; then
+		bad "$ATTIC is inside $PATH1 — it would sync itself to the cloud"; fail=1
+	else
+		ok "$ATTIC does not overlap $PATH1"
+	fi
+
+	head_ "headroom"
+	local about
+	if about=$(rclone about "$(remote_of "$PATH2")" 2>/dev/null); then
+		local free used
+		free=$(printf '%s' "$about" | awk '/^Free:/{print $2, $3}')
+		used=$(printf '%s' "$about" | awk '/^Used:/{print $2, $3}')
+		info "$(remote_of "$PATH2") used $used, free $free"
+		info "anything you move into $PATH1 must fit in that free space"
+	else
+		info "$(remote_of "$PATH2") does not report quota"
+	fi
+
+	head_ "pair"
+	if resync_done; then ok "established"
+	else warn "not established — 'ferry resync' before the first 'ferry sync'"; fi
+	[ -f "$BLOCKED" ] && { bad "BLOCKED — see 'ferry status'"; fail=1; }
+
+	printf '\n' >&2
+	if [ "$fail" != 0 ]; then
+		# A return, not a die: `ferry setup` runs doctor before the markers
+		# exist, so a failure there is expected and must not abort setup.
+		bad "doctor found problems"
+		return 1
+	fi
+	ok "ready"
+}
+
+# -------------------------------------------------------------------- check --
+
+cmd_check() {
+	info "comparing $PATH1 and $PATH2 (read-only, no changes)"
+	local oldifs="$IFS"
+	IFS='
+'
+	# IFS is a newline here, so splitting is deliberate: it is what lets paths
+	# containing spaces survive into rclone as single arguments.
+	# shellcheck disable=SC2086,SC2046
+	set -- $(rclone_common)
+	IFS="$oldifs"
+	rclone check "$PATH1" "$PATH2" "$@"
+}
+
+# ------------------------------------------------------------------- resync --
+
+cmd_resync() {
+	local dry=0 mode=path1 assume=0
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			-n|--dry-run) dry=1 ;;
+			--mode) shift; mode="${1:-}" ;;
+			--yes) assume=1 ;;
+			*) die "resync: unknown option '$1'" ;;
+		esac
+		shift
+	done
+	case "$mode" in
+		path1|path2|newer|older|larger|smaller) ;;
+		*) die "resync: --mode must be one of path1 path2 newer older larger smaller" ;;
+	esac
+
+	# A resync is a decision about which side is truth. Never let a scheduled,
+	# unattended invocation make it.
+	if [ "$assume" != 1 ] && [ "$dry" != 1 ]; then
+		[ -t 0 ] || die "resync needs a human — run it from a terminal (or pass --yes if you are certain)"
+	fi
+
+	attic_overlaps && die "ATTIC ($ATTIC) is inside PATH1 ($PATH1) — it would sync itself"
+	require_markers
+
+	head_ "resync"
+	info "path1  $PATH1"
+	info "path2  $PATH2"
+	info "mode   $mode"
+	case "$mode" in
+		path1) info "       where the two sides differ, ${B}the NAS wins${Z} and overwrites OneDrive" ;;
+		path2) info "       where the two sides differ, ${B}OneDrive wins${Z} and overwrites the NAS" ;;
+		*)     info "       where the two sides differ, the ${B}$mode${Z} file wins" ;;
+	esac
+	printf '\n' >&2
+
+	if [ "$assume" != 1 ] && [ "$dry" != 1 ]; then
+		printf '  Type %sresync%s to proceed: ' "$B" "$Z" >&2
+		local answer=""
+		read -r answer || true
+		[ "$answer" = resync ] || die "aborted"
+	fi
+
+	if ! lock_acquire; then
+		die "another ferry run is in progress"
+	fi
+
+	local stamp log rc=0
+	stamp=$(date +%Y%m%dT%H%M%S)
+	log="$LOG_DIR/$stamp-resync.log"
+
+	local args
+	args=$(printf '%s\n' \
+		bisync "$PATH1" "$PATH2" \
+		--resync --resync-mode "$mode" \
+		--workdir "$WORKDIR" \
+		--check-access --check-filename "$CHECK_FILENAME" \
+		--conflict-resolve newer --conflict-loser num \
+		--create-empty-src-dirs \
+		--log-file "$log" --log-level INFO \
+		--stats 5m --stats-one-line)
+	[ "$dry" = 1 ] && args="$args
+--dry-run"
+
+	local oldifs="$IFS"
+	IFS='
+'
+	# IFS is a newline here, so splitting is deliberate: it is what lets paths
+	# containing spaces survive into rclone as single arguments.
+	# shellcheck disable=SC2086,SC2046
+	set -- $args $(rclone_common)
+	IFS="$oldifs"
+
+	info "running (log: $log)"
+	set +e
+	rclone "$@"
+	rc=$?
+	set -e
+
+	if [ "$rc" = 0 ]; then
+		[ "$dry" = 1 ] || rm -f "$BLOCKED"
+		ok "resync complete — the pair is established"
+	else
+		bad "resync failed (exit $rc) — $log"
+		return "$rc"
+	fi
+}
+
+# -------------------------------------------------------------------- attic --
+
+cmd_attic() {
+	local sub="${1:-list}"
+	[ $# -gt 0 ] && shift
+	case "$sub" in
+		list)
+			info "$ATTIC"
+			rclone lsf "$ATTIC" --dirs-only 2>/dev/null | sed 's:/$::' | sort | while IFS= read -r d; do
+				[ -n "$d" ] || continue
+				printf '  %s  %s\n' "$d" "$(rclone size "$ATTIC/$d" --json 2>/dev/null \
+					| sed -n 's/.*"bytes":\([0-9]*\).*/\1/p' | awk '{printf "%.1f MB", $1/1048576}')" >&2
+			done
+			;;
+		restore)
+			local day="${1:-}" dest="${2:-}"
+			[ -n "$day" ] || die "attic restore DATE [DEST] — see 'ferry attic list'"
+			dest="${dest:-$PATH1}"
+			info "copying $ATTIC/$day -> $dest (no overwrite of existing files)"
+			rclone copy "$ATTIC/$day" "$dest" --ignore-existing --progress
+			;;
+		prune)
+			prune_attic
+			;;
+		*)
+			die "attic: unknown subcommand '$sub' (list, restore, prune)"
+			;;
+	esac
+}
+
+# ----------------------------------------------------------------- schedule --
+
+cmd_schedule() {
+	local sub="${1:-status}"
+	case "$sub" in
+		install)
+			local self
+			self=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
+			mkdir -p "$(dirname "$PLIST")"
+			cat > "$PLIST" <<-PLIST_EOF
+			<?xml version="1.0" encoding="UTF-8"?>
+			<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+			<plist version="1.0">
+			<dict>
+			  <key>Label</key><string>$LABEL</string>
+			  <key>ProgramArguments</key>
+			  <array>
+			    <string>$self</string>
+			    <string>sync</string>
+			  </array>
+			  <key>StartInterval</key><integer>$INTERVAL</integer>
+			  <key>RunAtLoad</key><false/>
+			  <key>StandardOutPath</key><string>$LOG_DIR/launchd.out</string>
+			  <key>StandardErrorPath</key><string>$LOG_DIR/launchd.err</string>
+			</dict>
+			</plist>
+			PLIST_EOF
+			launchctl unload "$PLIST" >/dev/null 2>&1 || true
+			launchctl load "$PLIST" || die "launchctl load failed"
+			ok "installed — every $((INTERVAL / 3600))h via $PLIST"
+			info "missed runs (Mac asleep) fire on wake; overlapping runs are skipped by the lock"
+			;;
+		remove)
+			launchctl unload "$PLIST" >/dev/null 2>&1 || true
+			rm -f "$PLIST"
+			ok "removed"
+			;;
+		status)
+			if [ -f "$PLIST" ]; then
+				info "$PLIST"
+				launchctl list 2>/dev/null | grep -F "$LABEL" >&2 || warn "not loaded"
+			else
+				info "not installed"
+			fi
+			;;
+		*)
+			die "schedule: unknown subcommand '$sub' (install, remove, status)"
+			;;
+	esac
+}
+
+# ------------------------------------------------------------------- usage --
+
+usage() {
+	cat >&2 <<-EOF
+	ferry $VERSION — keep a NAS folder and OneDrive as a two-way mirror
+
+	CONFIGURE
+	  ferry setup               guided setup on a new Mac — start here
+	  ferry markers             place the safety markers on both sides (once)
+	  ferry doctor              check every precondition, including cloud headroom
+
+	PREVIEW
+	  ferry sync -n             show what a run would do, change nothing
+	  ferry check               compare both sides, read-only
+
+	RUN
+	  ferry sync                the real run
+	  ferry status              last run, pair health, whether it is blocked
+	  ferry resync [-n] [--mode path1|path2|newer|older|larger|smaller]
+	                            establish or re-establish the pair (interactive)
+	  ferry attic list|restore DATE [DEST]|prune
+
+	SCHEDULE
+	  ferry schedule install|remove|status
+
+	Config: $CONFIG_FILE
+	State:  $STATE_DIR
+	EOF
+}
+
+# -------------------------------------------------------------------- main --
+
+main() {
+	local cmd="${1:-}"
+	[ $# -gt 0 ] && shift || true
+	case "$cmd" in
+		-h|--help|help|'') usage; exit 0 ;;
+		--version) printf 'ferry %s\n' "$VERSION"; exit 0 ;;
+	esac
+
+	command -v rclone >/dev/null 2>&1 || die "rclone is required (brew install rclone)"
+	load_config
+
+	case "$cmd" in
+		setup)    cmd_setup "$@" ;;
+		sync)     cmd_sync "$@" ;;
+		markers)  cmd_markers "$@" ;;
+		status)   cmd_status "$@" ;;
+		doctor)   cmd_doctor "$@" ;;
+		check)    cmd_check "$@" ;;
+		resync)   cmd_resync "$@" ;;
+		attic)    cmd_attic "$@" ;;
+		schedule) cmd_schedule "$@" ;;
+		*) usage; die "unknown command '$cmd'" ;;
+	esac
+}
+
+main "$@"
