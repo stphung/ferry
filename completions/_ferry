@@ -13,6 +13,7 @@ _ferry() {
         'attic:list, restore or prune deleted files'
         'schedule:install, remove or inspect the launchd job'
         'menubar:install, remove or inspect the SwiftBar indicator'
+        'uninstall:remove the launchd agent and menu bar plugin'
     )
 
     _arguments -C \
@@ -48,6 +49,11 @@ _ferry() {
                     ;;
                 status)
                     _arguments '--porcelain[key=value on stdout, for scripting]'
+                    ;;
+                uninstall)
+                    _arguments \
+                        '--purge[also delete config and state - forces a resync later]' \
+                        '--yes[skip the confirmation prompt]'
                     ;;
             esac
             ;;

@@ -56,7 +56,7 @@ setup() {
     work=$(mktemp -d)
     p1="$work/nas"; p2="$work/cloud"; attic="$work/attic"; state="$work/state"
     conf="$work/config"
-    mkdir -p "$p1" "$p2" "$attic" "$state"
+    mkdir -p "$p1" "$p2" "$attic" "$state" "$work/swiftbar"
     cat > "$conf" <<-EOF
 	PATH1=$p1
 	PATH2=$p2
@@ -68,7 +68,17 @@ setup() {
     # --check-access needs the marker; resync propagates it to the far side
     touch "$p1/RCLONE_TEST"
 }
-teardown() { [[ -n $work ]] && rm -rf "$work"; work=""; }
+# Groups that exercise `schedule install` perform a real `launchctl load`. If
+# such a group fails before reaching its uninstall, the agent would stay
+# registered against a temp directory that is about to vanish. Unload
+# unconditionally so a failing test cannot leave one behind.
+teardown() {
+    if [[ -n $work ]]; then
+        [[ -f $work/ferry.plist ]] && launchctl unload "$work/ferry.plist" 2>/dev/null
+        rm -rf "$work"
+    fi
+    work=""
+}
 
 # seed N numbered files on path1
 seed() {
@@ -79,6 +89,7 @@ seed() {
 # run ferry with the test config, capturing stdout, stderr and status
 run() {
     out=$(FERRY_CONFIG="$conf" FERRY_STATE_DIR="$state" FERRY_PLIST="$work/ferry.plist" \
+        FERRY_SWIFTBAR_DIR="$work/swiftbar" \
         "$FERRY" "$@" 2>"$work/err")
     status=$?
     err=$(cat "$work/err")
@@ -581,6 +592,70 @@ case $(basename "$plugin") in
     ferry.1m.sh) ok "27a plugin refreshes every minute" ;;
     *) no "27a plugin refreshes every minute" "unexpected name: $(basename "$plugin")" ;;
 esac
+teardown
+}
+
+
+# 28. uninstall removes the integrations and keeps the data. Homebrew has no
+#     uninstall hook for formulae, so an orphaned launchd agent would otherwise
+#     retry a deleted binary every INTERVAL forever.
+test_28_uninstall_removes_integrations() {
+setup
+seed 3
+establish
+run sync
+run schedule install                      # writes to $work/ferry.plist via FERRY_PLIST
+expect_file "28a precondition: agent installed" "$work/ferry.plist"
+
+run uninstall
+expect_status "28b uninstall succeeds" 0
+expect_no_file "28c the launchd agent is gone" "$work/ferry.plist"
+expect_file "28d state is KEPT by default" "$state/last-run"
+expect_file "28e the config is KEPT by default" "$conf"
+expect_contains "28f it says what it kept" "kept" "$err"
+printf 'stub\n' > "$work/swiftbar/ferry.1m.sh"
+run uninstall
+expect_no_file "28f2 it removes the plugin from the sandboxed dir only" \
+    "$work/swiftbar/ferry.1m.sh"
+expect_contains "28g and points at brew" "brew uninstall ferry" "$err"
+teardown
+}
+
+# 29. --purge is the destructive variant and must say what it costs
+test_29_uninstall_purge() {
+setup
+seed 3
+establish
+run sync
+expect_file "29a precondition: state exists" "$state/last-run"
+
+run uninstall --purge < /dev/null
+expect_status "29b purge without a terminal is refused" 1
+expect_file "29c nothing was deleted" "$state/last-run"
+
+run uninstall --purge --yes
+expect_status "29d purge with --yes succeeds" 0
+expect_no_file "29e state is gone" "$state/last-run"
+expect_no_file "29f config is gone" "$conf"
+expect_contains "29g it warned about losing the listings" "resync" "$err"
+teardown
+}
+
+# 30. The plugin must render when ferry has been uninstalled from under it —
+#     SwiftBar keeps running the leftover file every minute regardless.
+test_30_plugin_survives_missing_ferry() {
+setup
+plugin=$(cd -- "$(dirname -- "$0")/.." && pwd)/menubar/ferry.1m.sh
+out=$(FERRY_BIN="$work/no-such-ferry" "$plugin" 2>/dev/null)
+expect_contains "30a it reports ferry is gone" "not installed" "$out"
+expect_contains "30b the title shows it" "gone" "$out"
+expect_contains "30c it offers the reinstall" "brew install stphung/tap/ferry" "$out"
+expect_not_contains "30d and offers no actions that would fail" "param1=sync" "$out"
+
+# a path that exists but is not executable must be treated the same way
+touch "$work/not-exec"
+out=$(FERRY_BIN="$work/not-exec" "$plugin" 2>/dev/null)
+expect_contains "30e a non-executable ferry counts as missing" "not installed" "$out"
 teardown
 }
 

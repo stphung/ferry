@@ -171,6 +171,27 @@ ferry attic restore 2026-08-01    # copy that day's files back, never overwritin
 ferry attic prune                 # drop anything past ATTIC_KEEP_DAYS
 ```
 
+## Uninstalling
+
+```sh
+ferry uninstall          # FIRST — removes the launchd agent and the menu bar plugin
+brew uninstall ferry     # then the program itself
+```
+
+**Order matters, and Homebrew cannot do the first step for you.** Formulae have no
+uninstall hook — that is a cask-only feature — so `brew uninstall ferry` deletes the
+Cellar and nothing else. The launchd agent and the SwiftBar plugin live outside it and
+would be left behind: the agent retrying a binary that no longer exists, every interval,
+indefinitely.
+
+Configuration and state are **kept** by default, because they are data rather than
+integration. `ferry uninstall --purge` removes those too — but that discards the bisync
+listings, so a later reinstall could only re-establish the pair with a full `resync`,
+which resurrects any deletion made in the meantime. It refuses to run unattended.
+
+If the plugin does get orphaned it says so rather than breaking: the indicator turns to
+`⇄ gone` and offers the reinstall.
+
 ## Configuration
 
 `~/.config/ferry/config`, `KEY=value`, one per line. It is **parsed, not sourced** — a

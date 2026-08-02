@@ -1,4 +1,4 @@
-.TH FERRY 1 "2026-08-01" "ferry 0.2.0" "User Commands"
+.TH FERRY 1 "2026-08-01" "ferry 0.2.1" "User Commands"
 .SH NAME
 ferry \- keep a NAS folder and OneDrive as a two-way mirror, safely
 .SH SYNOPSIS
@@ -95,6 +95,23 @@ refreshes it. The indicator reads only local state, once a minute; cloud
 headroom is recorded by
 .B sync
 and shown as of that run.
+.TP
+.BI uninstall " [\-\-purge] [\-\-yes]"
+Remove the launchd agent and the menu bar plugin. Run this
+.B before
+.BR "brew uninstall ferry" :
+Homebrew formulae have no uninstall hook \(em that is a cask-only feature \(em
+so an orphaned agent would otherwise go on retrying a deleted binary every
+.I INTERVAL
+indefinitely.
+.IP
+Configuration and state are kept by default.
+.B \-\-purge
+deletes those too, which discards the bisync listings: the pair could then only
+be re-established by a full resync, resurrecting any deletion made in the
+meantime. It refuses to run without a terminal unless
+.B \-\-yes
+is passed.
 .SH CONFIGURATION
 .B ferry
 reads

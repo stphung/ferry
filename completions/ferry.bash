@@ -4,7 +4,7 @@ _ferry() {
     local cur prev cmds
     cur=${COMP_WORDS[COMP_CWORD]}
     prev=${COMP_WORDS[COMP_CWORD-1]}
-    cmds="setup markers doctor check sync status resync attic schedule menubar"
+    cmds="setup markers doctor check sync status resync attic schedule menubar uninstall"
 
     if [ "$COMP_CWORD" -eq 1 ]; then
         mapfile -t COMPREPLY < <(compgen -W "$cmds --help --version" -- "$cur")
@@ -25,6 +25,7 @@ _ferry() {
         schedule) mapfile -t COMPREPLY < <(compgen -W "install remove status" -- "$cur") ;;
         menubar)  mapfile -t COMPREPLY < <(compgen -W "install remove status" -- "$cur") ;;
         status)   mapfile -t COMPREPLY < <(compgen -W "--porcelain" -- "$cur") ;;
+        uninstall) mapfile -t COMPREPLY < <(compgen -W "--purge --yes" -- "$cur") ;;
     esac
 }
 

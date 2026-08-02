@@ -19,11 +19,20 @@ export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH"
 # FERRY_BIN lets the test suite point at a checkout instead of the installed
 # copy; SwiftBar never sets it.
 FERRY=${FERRY_BIN:-$(command -v ferry 2>/dev/null)}
-if [ -z "$FERRY" ]; then
-	echo "⇄ ?| color=red"
+
+# Test -x, not just emptiness. `brew uninstall ferry` leaves this plugin behind
+# — SwiftBar keeps running it every minute regardless — so "ferry is gone" is a
+# state this has to render, not crash in. It is also what makes the branch
+# reachable from the test suite via FERRY_BIN.
+if [ -z "$FERRY" ] || [ ! -x "$FERRY" ]; then
+	echo "⇄ gone| color=red"
 	echo "---"
-	echo "ferry not found on PATH"
-	echo "brew install stphung/tap/ferry | href=https://github.com/stphung/ferry"
+	echo "ferry is not installed"
+	echo "This plugin was left behind by an uninstall. | size=11"
+	echo "---"
+	echo "Reinstall: brew install stphung/tap/ferry | href=https://github.com/stphung/ferry"
+	echo "Or delete this plugin from | size=11"
+	echo "$HOME/.local/share/ferry/swiftbar | size=11 bash=/usr/bin/open param1=$HOME/.local/share/ferry/swiftbar terminal=false"
 	exit 0
 fi
 

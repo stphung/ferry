@@ -7,7 +7,7 @@
 
 set -eu
 
-VERSION=0.2.0
+VERSION=0.2.1
 
 # ---------------------------------------------------------------- defaults --
 #
@@ -1047,7 +1047,14 @@ plugin_source() {
 	return 1
 }
 
+# FERRY_SWIFTBAR_DIR exists so the test suite can never reach the real
+# installation. Without it, `ferry uninstall` under test reads the live
+# `defaults` value and deletes the user's actual plugin — which it did once.
 swiftbar_plugin_dir() {
+	if [ -n "${FERRY_SWIFTBAR_DIR:-}" ]; then
+		printf '%s\n' "$FERRY_SWIFTBAR_DIR"
+		return 0
+	fi
 	defaults read "$SWIFTBAR_DOMAIN" PluginDirectory 2>/dev/null
 }
 
@@ -1129,6 +1136,77 @@ cmd_menubar() {
 	esac
 }
 
+# ----------------------------------------------------------------- uninstall --
+#
+# Homebrew formulae have no uninstall hook — that is a cask-only feature — so
+# `brew uninstall ferry` deletes the Cellar and nothing else. The launchd agent
+# and the SwiftBar plugin live outside it and would be left behind: the agent
+# retrying a binary that no longer exists, every INTERVAL, forever.
+#
+# This has to be run BEFORE brew uninstall, because it is the installed script.
+
+cmd_uninstall() {
+	local purge=0 assume=0
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			--purge) purge=1 ;;
+			--yes)   assume=1 ;;
+			*) die "uninstall: unknown option '$1'" ;;
+		esac
+		shift
+	done
+
+	head_ "uninstall"
+
+	# --- the launchd agent: the one that actually misbehaves if orphaned ---
+	if [ -f "$PLIST" ]; then
+		launchctl unload "$PLIST" >/dev/null 2>&1 || true
+		rm -f "$PLIST"
+		ok "removed the launchd agent ($PLIST)"
+	else
+		info "no launchd agent installed"
+	fi
+
+	# --- the menu bar plugin ----------------------------------------------
+	local dir
+	dir=$(swiftbar_plugin_dir || true)
+	if [ -n "$dir" ] && [ -f "$dir/$PLUGIN_NAME" ]; then
+		rm -f "$dir/$PLUGIN_NAME"
+		open -g "swiftbar://refreshallplugins" 2>/dev/null || true
+		ok "removed the menu bar plugin ($dir/$PLUGIN_NAME)"
+	else
+		info "no menu bar plugin installed"
+	fi
+
+	# --- config and state: data, not integration --------------------------
+	if [ "$purge" = 1 ]; then
+		printf '\n' >&2
+		warn "--purge also deletes the bisync listings in $WORKDIR."
+		warn "Without them the pair cannot be re-established except by a full"
+		warn "resync, which resurrects any deletion made in the meantime."
+		printf '\n' >&2
+		if [ "$assume" != 1 ]; then
+			[ -t 0 ] || die "--purge needs a human — run it from a terminal (or pass --yes)"
+			printf '  Type %spurge%s to delete config and state: ' "$B" "$Z" >&2
+			local answer=""
+			read -r answer || true
+			[ "$answer" = purge ] || die "aborted — nothing was purged"
+		fi
+		rm -rf "$STATE_DIR"
+		rm -f "$CONFIG_FILE"
+		ok "removed $STATE_DIR"
+		ok "removed $CONFIG_FILE"
+	else
+		info "kept $CONFIG_FILE"
+		info "kept $STATE_DIR (bisync listings and logs)"
+		info "  'ferry uninstall --purge' removes those too — but losing the"
+		info "  listings forces a resync if you ever reinstall."
+	fi
+
+	printf '\n' >&2
+	info "now remove the program itself:  ${B}brew uninstall ferry${Z}"
+}
+
 # ------------------------------------------------------------------- usage --
 
 usage() {
@@ -1156,6 +1234,11 @@ usage() {
 	SCHEDULE
 	  ferry schedule install|remove|status
 	  ferry menubar install|remove|status   SwiftBar menu bar indicator
+
+	REMOVE
+	  ferry uninstall [--purge] remove the launchd agent and menu bar plugin.
+	                            Run this BEFORE 'brew uninstall ferry' —
+	                            Homebrew cannot do it for you.
 
 	Config: $CONFIG_FILE
 	State:  $STATE_DIR
@@ -1186,6 +1269,7 @@ main() {
 		attic)    cmd_attic "$@" ;;
 		schedule) cmd_schedule "$@" ;;
 		menubar)  cmd_menubar "$@" ;;
+		uninstall) cmd_uninstall "$@" ;;
 		*) usage; die "unknown command '$cmd'" ;;
 	esac
 }
