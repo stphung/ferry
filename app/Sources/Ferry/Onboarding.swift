@@ -195,7 +195,7 @@ struct OnboardingView: View {
     }
 }
 
-// MARK: - remote picker (nothing hardcoded: discover, or create)
+// MARK: - remote picker (see, test, edit, delete — not just choose)
 
 struct RemotePicker: View {
     enum Kind { case nas, cloud }
@@ -206,11 +206,17 @@ struct RemotePicker: View {
     let onNext: () -> Void
 
     @State private var creating = false
-    // SMB form
-    @State private var smbName = "nas"
-    @State private var smbHost = ""
-    @State private var smbUser = NSUserName()
-    @State private var smbPass = ""
+    @State private var editing = false
+    // form fields (create and edit share them)
+    @State private var formName = ""
+    @State private var formHost = ""
+    @State private var formUser = NSUserName()
+    @State private var formPass = ""
+    // details + connection test of the selected remote
+    @State private var info: [String: String] = [:]
+    @State private var testing = false
+    @State private var testResult: (ok: Bool, detail: String)?
+    @State private var confirmDelete = false
     // OneDrive flow
     @State private var odName = "onedrive"
     @State private var odBusy = false
@@ -220,13 +226,10 @@ struct RemotePicker: View {
 
     private var blurb: String {
         kind == .nas
-            ? "Where your files live. Pick a NAS connection you've already set up, or add one over SMB."
+            ? "Where your files live. Pick a NAS connection, or add one over SMB. Selecting one tests it immediately."
             : "The cloud side of the mirror. Pick an existing cloud connection, or sign in to OneDrive."
     }
 
-    /// The NAS step shows network-storage types; the cloud step shows the
-    /// rest. Offering a OneDrive remote as your "NAS" would muddle the roles
-    /// the whole app is built on.
     private var eligible: [StatusModel.Remote] {
         let nasTypes = ["smb", "sftp", "nfs", "local", "webdav", "ftp"]
         return model.remotes.filter {
@@ -241,21 +244,68 @@ struct RemotePicker: View {
             if !eligible.isEmpty {
                 List(eligible, selection: Binding(
                     get: { chosen.isEmpty ? nil : chosen },
-                    set: { chosen = $0 ?? "" })
+                    set: { select($0) })
                 ) { r in
                     HStack {
                         Image(systemName: r.type == "smb"
                               ? "externaldrive.connected.to.line.below" : "cloud")
-                        Text("\(r.name)  —  \(r.type)")
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(r.name)
+                            if chosen == r.name, let host = info["host"] {
+                                Text("\(host)\(info["user"].map { " · \($0)" } ?? "")")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            } else {
+                                Text(r.type).font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
                         Spacer()
                         if chosen == r.name {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundStyle(Color.accentColor)
+                            if testing {
+                                ProgressView().controlSize(.small)
+                            } else if let t = testResult {
+                                Label(t.ok ? "Connected" : "Unreachable",
+                                      systemImage: t.ok ? "checkmark.circle.fill" : "xmark.octagon.fill")
+                                    .foregroundStyle(t.ok ? .green : .red)
+                                    .font(.callout)
+                            }
                         }
                     }
                     .tag(r.name)
                 }
-                .frame(minHeight: 120, maxHeight: 180)
+                .frame(minHeight: 120, maxHeight: 200)
+
+                // what the selection means, and what you can do with it
+                if !chosen.isEmpty {
+                    HStack(spacing: 10) {
+                        Button {
+                            runTest()
+                        } label: { Label("Test Connection", systemImage: "bolt") }
+                        .disabled(testing)
+
+                        if kind == .nas && info["type"] == "smb" {
+                            Button {
+                                formName = chosen
+                                formHost = info["host"] ?? ""
+                                formUser = info["user"] ?? ""
+                                formPass = ""
+                                editing = true
+                                creating = true
+                            } label: { Label("Edit…", systemImage: "pencil") }
+                        }
+
+                        Button(role: .destructive) {
+                            confirmDelete = true
+                        } label: { Label("Delete…", systemImage: "trash") }
+
+                        Spacer()
+                    }
+                    if let t = testResult, !t.ok {
+                        Text(t.detail)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                            .lineLimit(2)
+                    }
+                }
             } else {
                 Text(kind == .nas
                      ? "No NAS connections yet — add one below."
@@ -263,9 +313,16 @@ struct RemotePicker: View {
                     .font(.callout).foregroundStyle(.secondary)
             }
 
-            DisclosureGroup(kind == .nas ? "New SMB connection…" : "Sign in to OneDrive…",
-                            isExpanded: $creating) {
+            DisclosureGroup(
+                kind == .nas
+                    ? (editing ? "Edit \(formName)" : "New SMB connection…")
+                    : "Sign in to OneDrive…",
+                isExpanded: $creating
+            ) {
                 if kind == .nas { smbForm } else { onedriveFlow }
+            }
+            .onChange(of: creating) { open in
+                if !open { editing = false }
             }
 
             if let e = error { Text(e).foregroundStyle(.red).font(.callout) }
@@ -277,34 +334,95 @@ struct RemotePicker: View {
                 } label: { Label("Continue", systemImage: "arrow.right") }
                 .controlSize(.large)
                 .buttonStyle(.borderedProminent)
-                .disabled(chosen.isEmpty)
+                .disabled(chosen.isEmpty || testing || !(testResult?.ok ?? false))
             }
         }
         .frame(maxWidth: 560)
-        .onAppear { model.loadRemotes() }
+        .onAppear {
+            model.loadRemotes()
+            // FERRY_UI_REMOTE: screenshot scaffolding — preselects a row so the
+            // management UI is capturable without a click. Never set normally.
+            if chosen.isEmpty,
+               let pre = ProcessInfo.processInfo.environment["FERRY_UI_REMOTE"] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { select(pre) }
+            } else if !chosen.isEmpty {
+                select(chosen)
+            }
+        }
+        .confirmationDialog("Delete the connection “\(chosen)”?",
+                            isPresented: $confirmDelete) {
+            Button("Delete", role: .destructive) {
+                let name = chosen
+                Task {
+                    if let e = await model.deleteRemote(name) {
+                        error = e
+                    } else {
+                        chosen = ""
+                        info = [:]; testResult = nil
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Removes it from this Mac's connection list. Files on the NAS itself are untouched. Ferry refuses to delete a connection the sync pair is using.")
+        }
+    }
+
+    private func select(_ name: String?) {
+        chosen = name ?? ""
+        info = [:]; testResult = nil; error = nil
+        guard let name, !name.isEmpty else { return }
+        Task {
+            info = await model.remoteInfo(name)
+        }
+        runTest()
+    }
+
+    private func runTest() {
+        guard !chosen.isEmpty else { return }
+        testing = true; testResult = nil
+        let name = chosen
+        Task {
+            let r = await model.testRemote(name)
+            if chosen == name {           // ignore a stale result after reselect
+                testResult = r
+                testing = false
+            }
+        }
     }
 
     private var smbForm: some View {
         Form {
-            TextField("Name", text: $smbName)
-            TextField("Host or IP", text: $smbHost, prompt: Text("192.168.1.10"))
-            TextField("Username", text: $smbUser)
-            SecureField("Password", text: $smbPass)
+            TextField("Name", text: $formName)
+                .disabled(editing)        // renaming is a delete + create
+            TextField("Host or IP", text: $formHost, prompt: Text("192.168.1.10"))
+            TextField("Username", text: $formUser)
+            SecureField("Password", text: $formPass,
+                        prompt: editing ? Text("leave blank to keep current") : nil)
             Button {
                 error = nil
                 Task {
-                    if let e = await model.createSMB(name: smbName, host: smbHost,
-                                                    user: smbUser, password: smbPass) {
-                        error = e
+                    let e: String?
+                    if editing {
+                        e = await model.updateSMB(name: formName, host: formHost,
+                                                  user: formUser, password: formPass)
                     } else {
-                        chosen = smbName
+                        e = await model.createSMB(name: formName, host: formHost,
+                                                  user: formUser, password: formPass)
+                    }
+                    if let e { error = e } else {
                         creating = false
+                        select(formName)   // show it selected, tested
                     }
                 }
-            } label: { Label("Create Connection", systemImage: "plus") }
-            .disabled(smbName.isEmpty || smbHost.isEmpty)
+            } label: {
+                Label(editing ? "Save Changes" : "Create Connection",
+                      systemImage: editing ? "checkmark" : "plus")
+            }
+            .disabled(formName.isEmpty || formHost.isEmpty)
         }
         .padding(.top, 6)
+        .onAppear { if !editing { formName = "nas"; formHost = ""; formPass = "" } }
     }
 
     private var onedriveFlow: some View {

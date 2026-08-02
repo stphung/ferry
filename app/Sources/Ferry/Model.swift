@@ -364,6 +364,55 @@ final class StatusModel: ObservableObject {
         return r.status == 0 ? r.out.trimmingCharacters(in: .whitespacesAndNewlines) : "?"
     }
 
+    /// Non-secret settings of a remote (host, user, type…).
+    func remoteInfo(_ name: String) async -> [String: String] {
+        guard let bin = ferryBin ?? FerryCLI.find() else { return [:] }
+        let r = await Task.detached(priority: .utility) {
+            FerryCLI.run(bin, ["remote-show", name, "--porcelain"])
+        }.value
+        var info: [String: String] = [:]
+        for line in r.out.split(separator: "\n") {
+            let f = line.split(separator: "\t", maxSplits: 1).map(String.init)
+            if f.count == 2 { info[f[0]] = f[1] }
+        }
+        return info
+    }
+
+    /// Is it reachable right now? (ok, detail) — detail is entry count or
+    /// rclone's own error.
+    func testRemote(_ name: String) async -> (ok: Bool, detail: String) {
+        guard let bin = ferryBin ?? FerryCLI.find() else { return (false, "ferry not found") }
+        let r = await Task.detached(priority: .utility) {
+            FerryCLI.run(bin, ["remote-test", name, "--porcelain"])
+        }.value
+        let f = r.out.trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(separator: "\t", maxSplits: 1).map(String.init)
+        if f.count == 2 { return (f[0] == "ok", f[1]) }
+        return (r.status == 0, r.status == 0 ? "reachable" : "unreachable")
+    }
+
+    func deleteRemote(_ name: String) async -> String? {
+        guard let bin = ferryBin ?? FerryCLI.find() else { return "ferry not found" }
+        let r = await Task.detached(priority: .utility) {
+            FerryCLI.runWithInput(bin, ["remote-delete", name], stdin: "")
+        }.value
+        if r.status != 0 { return r.err.isEmpty ? "could not delete" : r.err }
+        loadRemotes()
+        return nil
+    }
+
+    func updateSMB(name: String, host: String, user: String, password: String) async -> String? {
+        guard let bin = ferryBin ?? FerryCLI.find() else { return "ferry not found" }
+        var args = ["remote-update-smb", name, "--host", host, "--user", user]
+        if !password.isEmpty { args.append("--password-stdin") }
+        let r = await Task.detached(priority: .utility) {
+            FerryCLI.runWithInput(bin, args, stdin: password.isEmpty ? "" : password + "\n")
+        }.value
+        if r.status != 0 { return r.err.isEmpty ? "could not update" : r.err }
+        loadRemotes()
+        return nil
+    }
+
     func mkdir(_ path: String) async -> Bool {
         guard let bin = ferryBin else { return false }
         let r = await Task.detached(priority: .utility) {

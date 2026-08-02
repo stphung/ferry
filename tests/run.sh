@@ -836,6 +836,51 @@ teardown
 }
 
 
+# 39. Remote management: show hides secrets, test answers honestly, update
+#     edits in place keeping the password, delete refuses while in use
+test_39_remote_management() {
+setup
+rcconf="$work/rclone.conf"
+run_rc() {
+    out=$(RCLONE_CONFIG="$rcconf" FERRY_CONFIG="$conf" FERRY_STATE_DIR="$state" \
+        "$FERRY" "$@" 2>"$work/err"); status=$?; err=$(cat "$work/err")
+}
+printf 'topsecret\n' | RCLONE_CONFIG="$rcconf" FERRY_CONFIG="$conf" FERRY_STATE_DIR="$state" \
+    "$FERRY" remote-create-smb mynas 192.0.2.9 alice >/dev/null 2>&1
+
+run_rc remote-show mynas --porcelain
+expect_status "39a show succeeds" 0
+expect_contains "39b host shown" "host	192.0.2.9" "$out"
+expect_contains "39c user shown" "user	alice" "$out"
+expect_not_contains "39d password NEVER shown" "pass" "$out"
+
+run_rc remote-update-smb mynas --host 192.0.2.77
+expect_status "39e update host succeeds" 0
+run_rc remote-show mynas --porcelain
+expect_contains "39f host changed" "host	192.0.2.77" "$out"
+expect_contains "39g password survived the edit" "pass" "$(cat "$rcconf")"
+
+run_rc remote-test "$p1"
+expect_status "39h test: reachable local path" 0
+expect_contains "39i with an entry count" "entries" "$err$out"
+run_rc remote-test "$work/no-such-dir" --porcelain
+expect_status "39j test: missing path fails" 1
+expect_contains "39k machine-readably" "bad	" "$out"
+
+# in-use rail: config references mynas
+printf 'PATH1=mynas:Vault\nPATH2=%s\nATTIC=%s\n' "$p2" "$attic" > "$conf"
+run_rc remote-delete mynas
+expect_status "39l delete refused while PATH1 uses it" 1
+expect_contains "39m and says so" "in use by PATH1" "$err"
+
+printf 'PATH1=%s\nPATH2=%s\nATTIC=%s\n' "$p1" "$p2" "$attic" > "$conf"
+run_rc remote-delete mynas
+expect_status "39n delete succeeds when unused" 0
+expect_not_contains "39o gone from the config" "[mynas]" "$(cat "$rcconf")"
+teardown
+}
+
+
 # ------------------------------------------------------------------ runner --
 
 all_tests=$(declare -F | awk '{print $3}' | grep '^test_[0-9]' | sort)
