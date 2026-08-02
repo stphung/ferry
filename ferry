@@ -7,7 +7,7 @@
 
 set -eu
 
-VERSION=0.1.1
+VERSION=0.2.0
 
 # ---------------------------------------------------------------- defaults --
 #
@@ -550,14 +550,27 @@ cmd_sync() {
 		outcome=failed
 	fi
 
+	# Headroom is recorded here, not polled by the menu bar. A sync is already
+	# talking to the cloud, so this costs one more call every few hours instead
+	# of one a minute forever. The figure is therefore "as of last sync", and
+	# the staleness indicator is what tells you it has stopped moving.
+	local free_bytes="" used_bytes="" about=""
+	if about=$(rclone about "$(remote_of "$PATH2")" --json 2>/dev/null); then
+		free_bytes=$(printf '%s' "$about" | sed -n 's/.*"free":\([0-9]*\).*/\1/p')
+		used_bytes=$(printf '%s' "$about" | sed -n 's/.*"used":\([0-9]*\).*/\1/p')
+	fi
+
 	state_set \
 		when "$(date +%Y-%m-%dT%H:%M:%S%z)" \
+		epoch "$(date +%s)" \
 		outcome "$outcome" \
 		exit "$rc" \
 		duration "$dur" \
 		copied "$copied" \
 		deleted "$deleted" \
 		errors "$errors" \
+		free_bytes "$free_bytes" \
+		used_bytes "$used_bytes" \
 		log "$log"
 
 	prune_logs
@@ -621,7 +634,78 @@ prune_attic() {
 
 # ------------------------------------------------------------------- status --
 
+# Machine-readable status: key=value on STDOUT, one per line. The human report
+# below writes only to stderr, so the two never mix — the same contract salvage
+# uses. This is what the menu bar plugin consumes; it must never scrape the
+# human output, which is free to be reworded.
+#
+# `state` is the single field that drives the indicator. Precedence matters:
+# a run in progress outranks a block, a block outranks anything derived from
+# the last run, and staleness is only meaningful once a run has succeeded.
+status_porcelain() {
+	local now epoch age state sched running=0 blocked=0 established=0
+
+	now=$(date +%s)
+	epoch=$(state_get epoch 2>/dev/null || echo "")
+	[ -d "$LOCK_DIR" ] && running=1
+	[ -f "$BLOCKED" ] && blocked=1
+	resync_done && established=1
+
+	age=""
+	[ -n "$epoch" ] && age=$((now - epoch))
+
+	local stale=0
+	if [ -n "$age" ] && [ "$age" -gt $((INTERVAL * 2)) ]; then
+		stale=1
+	fi
+
+	if   [ "$running" = 1 ];                     then state=syncing
+	elif [ "$blocked" = 1 ];                     then state=blocked
+	elif [ "$established" = 0 ];                 then state=unestablished
+	elif [ ! -f "$LAST_RUN" ];                   then state=never
+	elif [ "$(state_get outcome || echo)" != ok ]; then state=failed
+	elif [ "$stale" = 1 ];                       then state=stale
+	else                                              state=ok
+	fi
+
+	if [ -f "$PLIST" ]; then
+		if launchctl list 2>/dev/null | grep -Fq "$LABEL"; then sched=loaded; else sched=unloaded; fi
+	else
+		sched=absent
+	fi
+
+	printf 'version=%s\n'     "$VERSION"
+	printf 'state=%s\n'       "$state"
+	printf 'running=%s\n'     "$running"
+	printf 'blocked=%s\n'     "$blocked"
+	printf 'established=%s\n' "$established"
+	printf 'stale=%s\n'       "$stale"
+	printf 'schedule=%s\n'    "$sched"
+	printf 'interval=%s\n'    "$INTERVAL"
+	printf 'path1=%s\n'       "$PATH1"
+	printf 'path2=%s\n'       "$PATH2"
+	printf 'age_seconds=%s\n' "$age"
+
+	local k
+	for k in when outcome exit duration copied deleted errors free_bytes used_bytes log; do
+		printf '%s=%s\n' "$k" "$(state_get "$k" || echo)"
+	done
+}
+
 cmd_status() {
+	local porcelain=0
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			--porcelain) porcelain=1 ;;
+			*) die "status: unknown option '$1'" ;;
+		esac
+		shift
+	done
+	if [ "$porcelain" = 1 ]; then
+		status_porcelain
+		return 0
+	fi
+
 	head_ "ferry $VERSION"
 	info "$PATH1  <->  $PATH2"
 
@@ -934,6 +1018,117 @@ cmd_schedule() {
 	esac
 }
 
+# ----------------------------------------------------------------- menubar --
+#
+# A Homebrew formula cannot depend on a cask — the formula DSL accepts only
+# formula names plus :arch/:linux/:macos/:maximum_macos/:xcode. So SwiftBar can
+# never arrive with `brew install ferry`, and this command exists to close that
+# gap explicitly rather than leave it as a README step.
+
+SWIFTBAR_APP="/Applications/SwiftBar.app"
+SWIFTBAR_DOMAIN="com.ameba.SwiftBar"
+PLUGIN_NAME="ferry.1m.sh"
+
+swiftbar_installed() { [ -d "$SWIFTBAR_APP" ]; }
+
+# The plugin ships beside the script when installed (share/ferry/) and inside
+# the checkout during development. Look in both rather than guessing one.
+plugin_source() {
+	local here
+	here=$(cd "$(dirname "$0")" 2>/dev/null && pwd) || return 1
+	local c
+	for c in \
+		"$here/../share/ferry/$PLUGIN_NAME" \
+		"$here/menubar/$PLUGIN_NAME" \
+		"$here/../menubar/$PLUGIN_NAME"
+	do
+		[ -f "$c" ] && { printf '%s\n' "$c"; return 0; }
+	done
+	return 1
+}
+
+swiftbar_plugin_dir() {
+	defaults read "$SWIFTBAR_DOMAIN" PluginDirectory 2>/dev/null
+}
+
+cmd_menubar() {
+	local sub="${1:-status}"
+	[ $# -gt 0 ] && shift
+
+	case "$sub" in
+		install)
+			head_ "menu bar"
+			if ! swiftbar_installed; then
+				info "SwiftBar is what renders the indicator; it is a separate app."
+				info "A Homebrew formula cannot install a cask, so ferry cannot bundle it."
+				printf '\n' >&2
+				if confirm "run 'brew install --cask swiftbar' now?"; then
+					command -v brew >/dev/null 2>&1 || die "brew not found — install SwiftBar manually"
+					brew install --cask swiftbar || die "cask install failed"
+				else
+					die "install it with: brew install --cask swiftbar"
+				fi
+			fi
+			ok "SwiftBar present"
+
+			local src dir
+			src=$(plugin_source) || die "cannot find $PLUGIN_NAME — is ferry installed properly?"
+
+			dir=$(swiftbar_plugin_dir || true)
+			if [ -z "$dir" ]; then
+				dir="$HOME/.local/share/ferry/swiftbar"
+				mkdir -p "$dir"
+				defaults write "$SWIFTBAR_DOMAIN" PluginDirectory -string "$dir" 2>/dev/null \
+					|| die "could not set SwiftBar's plugin directory — set it to $dir in SwiftBar's preferences"
+				ok "set SwiftBar plugin directory to $dir"
+			else
+				info "SwiftBar plugin directory: $dir"
+				[ -d "$dir" ] || mkdir -p "$dir"
+			fi
+
+			cp "$src" "$dir/$PLUGIN_NAME" || die "could not write $dir/$PLUGIN_NAME"
+			chmod +x "$dir/$PLUGIN_NAME"
+			ok "installed $dir/$PLUGIN_NAME"
+
+			# SwiftBar has to be running to show anything, and has to be told to
+			# rescan after a plugin appears.
+			open -g "$SWIFTBAR_APP" 2>/dev/null || true
+			open -g "swiftbar://refreshallplugins" 2>/dev/null || true
+			ok "SwiftBar refreshed — look for the ⇄ in your menu bar"
+			;;
+		remove)
+			local dir
+			dir=$(swiftbar_plugin_dir || true)
+			[ -n "$dir" ] || die "SwiftBar has no plugin directory configured"
+			rm -f "$dir/$PLUGIN_NAME"
+			open -g "swiftbar://refreshallplugins" 2>/dev/null || true
+			ok "removed $dir/$PLUGIN_NAME"
+			;;
+		status)
+			head_ "menu bar"
+			if swiftbar_installed; then ok "SwiftBar installed"
+			else bad "SwiftBar not installed — brew install --cask swiftbar"; fi
+			local dir
+			dir=$(swiftbar_plugin_dir || true)
+			if [ -n "$dir" ]; then
+				info "plugin directory: $dir"
+				if [ -f "$dir/$PLUGIN_NAME" ]; then ok "$PLUGIN_NAME installed"
+				else bad "$PLUGIN_NAME not installed — 'ferry menubar install'"; fi
+			else
+				info "SwiftBar plugin directory not set — 'ferry menubar install' will set it"
+			fi
+			if plugin_source >/dev/null 2>&1; then
+				info "source: $(plugin_source)"
+			else
+				bad "cannot find $PLUGIN_NAME to install from"
+			fi
+			;;
+		*)
+			die "menubar: unknown subcommand '$sub' (install, remove, status)"
+			;;
+	esac
+}
+
 # ------------------------------------------------------------------- usage --
 
 usage() {
@@ -951,13 +1146,16 @@ usage() {
 
 	RUN
 	  ferry sync                the real run
-	  ferry status              last run, pair health, whether it is blocked
+	  ferry status [--porcelain]
+	                            last run, pair health, whether it is blocked
+	                            --porcelain gives key=value on stdout
 	  ferry resync [-n] [--mode path1|path2|newer|older|larger|smaller]
 	                            establish or re-establish the pair (interactive)
 	  ferry attic list|restore DATE [DEST]|prune
 
 	SCHEDULE
 	  ferry schedule install|remove|status
+	  ferry menubar install|remove|status   SwiftBar menu bar indicator
 
 	Config: $CONFIG_FILE
 	State:  $STATE_DIR
@@ -987,6 +1185,7 @@ main() {
 		resync)   cmd_resync "$@" ;;
 		attic)    cmd_attic "$@" ;;
 		schedule) cmd_schedule "$@" ;;
+		menubar)  cmd_menubar "$@" ;;
 		*) usage; die "unknown command '$cmd'" ;;
 	esac
 }

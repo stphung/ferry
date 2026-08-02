@@ -11,6 +11,7 @@ BINDIR   = $(DESTDIR)$(PREFIX)/bin
 MANDIR   = $(DESTDIR)$(PREFIX)/share/man/man1
 ZSHDIR   = $(DESTDIR)$(PREFIX)/share/zsh/site-functions
 BASHDIR  = $(DESTDIR)$(PREFIX)/share/bash-completion/completions
+SHAREDIR = $(DESTDIR)$(PREFIX)/share/ferry
 
 .DEFAULT_GOAL := help
 .PHONY: help install uninstall link unlink test list-tests lint lint-tools deps check-version dist hooks unhooks
@@ -24,11 +25,12 @@ help: ## Show this help
 	@printf '\nPREFIX is %s (override with make install PREFIX=...)\n' '$(PREFIX)'
 
 install: ## Copy ferry, its man page and completions into PREFIX
-	@mkdir -p $(BINDIR) $(MANDIR) $(ZSHDIR) $(BASHDIR)
+	@mkdir -p $(BINDIR) $(MANDIR) $(ZSHDIR) $(BASHDIR) $(SHAREDIR)
 	install -m 0755 ferry                  $(BINDIR)/ferry
 	install -m 0644 doc/ferry.1            $(MANDIR)/ferry.1
 	install -m 0644 completions/_ferry     $(ZSHDIR)/_ferry
 	install -m 0644 completions/ferry.bash $(BASHDIR)/ferry
+	install -m 0755 menubar/ferry.1m.sh    $(SHAREDIR)/ferry.1m.sh
 	@printf '\ninstalled to %s\n' '$(PREFIX)'
 	@case ":$$PATH:" in *":$(PREFIX)/bin:"*) ;; \
 		*) printf '\n  NOTE: %s/bin is not on your PATH. Add:\n    export PATH="%s/bin:$$PATH"\n' '$(PREFIX)' '$(PREFIX)' ;; \
@@ -37,6 +39,7 @@ install: ## Copy ferry, its man page and completions into PREFIX
 
 uninstall: ## Remove all four installed files
 	rm -f $(BINDIR)/ferry $(MANDIR)/ferry.1 $(ZSHDIR)/_ferry $(BASHDIR)/ferry
+	rm -rf $(SHAREDIR)
 	@printf 'removed from %s\n' '$(PREFIX)'
 
 link: ## Symlink instead of copying, for development
@@ -53,7 +56,7 @@ test: ## Run the suite; T="5 9" runs groups, T="-k conflict" filters by name
 list-tests: ## List the test groups
 	@./tests/run.sh -l
 
-SHELL_FILES = ferry tests/run.sh
+SHELL_FILES = ferry tests/run.sh menubar/ferry.1m.sh
 
 # One entry point for static analysis, run byte-identically here and in CI.
 # Suppressions live in .shellcheckrc, not on this command line, so there is
@@ -113,6 +116,6 @@ check-version: ## VERSION= in ferry must equal the .TH line in doc/ferry.1
 dist: check-version ## Build release artifacts into dist/
 	@rm -rf dist && mkdir -p dist
 	@v=$$(grep -m1 '^VERSION=' ferry | cut -d= -f2); \
-	tar czf dist/ferry-$$v.tar.gz ferry doc completions Makefile README.md LICENSE; \
+	tar czf dist/ferry-$$v.tar.gz ferry doc completions menubar Makefile README.md LICENSE; \
 	cp ferry dist/ferry; \
 	printf 'dist/ferry-%s.tar.gz\n' "$$v"

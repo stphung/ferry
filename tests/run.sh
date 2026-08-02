@@ -480,6 +480,111 @@ teardown
 }
 
 
+# 23. The porcelain contract: machine output on stdout, human report on stderr.
+#     The menu bar plugin depends on this split — if the human report ever
+#     leaked into stdout it would parse as garbage keys.
+test_23_porcelain_contract() {
+setup
+seed 3
+establish
+run status --porcelain
+expect_status "23a porcelain exits 0" 0
+expect_eq "23b nothing goes to stderr" "" "$err"
+expect_contains "23c state is reported" "state=" "$out"
+expect_contains "23d the pair is reported established" "established=1" "$out"
+expect_contains "23e paths are reported" "path1=$p1" "$out"
+# every line must be key=value, or the plugin's sed parser silently misreads
+bad_lines=$(printf '%s\n' "$out" | grep -vc '^[a-z_0-9]*=' || true)
+expect_eq "23f every line is key=value" "0" "$bad_lines"
+teardown
+}
+
+# 24. state is the single field driving the indicator, so its precedence has
+#     to hold: syncing > blocked > unestablished > never > failed > stale > ok
+test_24_porcelain_state_precedence() {
+setup
+seed 3
+
+run status --porcelain
+expect_contains "24a unestablished before a resync" "state=unestablished" "$out"
+
+establish
+run status --porcelain
+expect_contains "24b never, once established but not yet run" "state=never" "$out"
+
+run sync
+run status --porcelain
+expect_contains "24c ok after a successful run" "state=ok" "$out"
+expect_contains "24d not stale" "stale=0" "$out"
+
+# backdate the run past 2x the interval
+sed -i '' "s/^epoch=.*/epoch=$(( $(date +%s) - 40000 ))/" "$state/last-run"
+run status --porcelain
+expect_contains "24e stale past 2x the interval" "state=stale" "$out"
+expect_contains "24f and flagged" "stale=1" "$out"
+
+# a block outranks staleness
+printf 'blocked for a reason\n' > "$state/blocked"
+run status --porcelain
+expect_contains "24g blocked outranks stale" "state=blocked" "$out"
+
+# a run in progress outranks everything
+mkdir -p "$state/lock"; printf '%s\n' "$$" > "$state/lock/pid"
+run status --porcelain
+expect_contains "24h syncing outranks blocked" "state=syncing" "$out"
+rm -rf "$state/lock" "$state/blocked"
+teardown
+}
+
+# 25. A failed run must surface as failed, not as a stale success
+test_25_porcelain_failed_state() {
+setup
+seed 20
+establish
+rm "$p2/f1.txt" "$p2/f2.txt" "$p2/f3.txt"   # trips the max-delete rail
+run sync
+run status --porcelain
+expect_contains "25a a tripped rail reports blocked" "state=blocked" "$out"
+expect_contains "25b and the block flag is set" "blocked=1" "$out"
+teardown
+}
+
+# 26. The plugin renders from porcelain alone and never touches the network
+test_26_menubar_plugin_renders() {
+setup
+seed 3
+establish
+run sync
+plugin=$(cd -- "$(dirname -- "$0")/.." && pwd)/menubar/ferry.1m.sh
+if [ ! -x "$plugin" ]; then
+    no "26a plugin is executable" "not found or not executable: $plugin"
+    teardown; return
+fi
+ok "26a plugin is executable"
+out=$(FERRY_BIN="$FERRY" FERRY_CONFIG="$conf" FERRY_STATE_DIR="$state" "$plugin" 2>"$work/err")
+expect_contains "26b title carries the sync glyph" "⇄" "$out"
+expect_contains "26c a separator starts the dropdown" "---" "$out"
+expect_contains "26d sync is offered" "Sync now" "$out"
+expect_contains "26e resync opens a Terminal, never one click" \
+    "param1=resync terminal=true" "$out"
+expect_not_contains "26f resync is never run headlessly" \
+    "param1=resync terminal=false" "$out"
+teardown
+}
+
+# 27. Filename encodes SwiftBar's refresh interval; renaming it silently
+#     changes how often the indicator updates
+test_27_plugin_refresh_interval() {
+setup
+plugin=$(cd -- "$(dirname -- "$0")/.." && pwd)/menubar/ferry.1m.sh
+case $(basename "$plugin") in
+    ferry.1m.sh) ok "27a plugin refreshes every minute" ;;
+    *) no "27a plugin refreshes every minute" "unexpected name: $(basename "$plugin")" ;;
+esac
+teardown
+}
+
+
 # ------------------------------------------------------------------ runner --
 
 all_tests=$(declare -F | awk '{print $3}' | grep '^test_[0-9]' | sort)

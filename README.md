@@ -105,6 +105,45 @@ ferry doctor       # every precondition, including cloud headroom
 wake, overlapping runs are skipped by the lock, and a failure posts a macOS notification —
 success is silent.
 
+## Menu bar
+
+```sh
+ferry menubar install
+```
+
+Puts a `⇄ 2h  12↑ 3↓` indicator in the menu bar: icon, time since the last successful
+sync, and what the last run moved. The dropdown carries the detail and the safe actions —
+sync now, dry run, check, doctor, open the latest log.
+
+It goes **amber past twice your sync interval**, even when nothing has failed. That is the
+case worth catching: an unloaded launchd job or a Mac left asleep produces no error at
+all, it just quietly stops syncing.
+
+Two things it deliberately does not do. **`resync` opens a Terminal rather than running** —
+it decides which side is truth and must keep its confirmation. And it **never touches the
+network**: at a one-minute refresh, polling the cloud would be ~1,400 API calls a day to
+decorate a menu, so `ferry sync` records headroom while it is already connected and the
+menu shows it as of that run.
+
+> SwiftBar renders it, and it is a separate application. A Homebrew formula **cannot**
+> depend on a cask, so `brew install stphung/tap/ferry` can never install it —
+> `ferry menubar install` offers to run `brew install --cask swiftbar` for you.
+
+Scripting against ferry uses the same interface the plugin does:
+
+```console
+$ ferry status --porcelain
+state=ok
+age_seconds=7245
+copied=12
+deleted=3
+free_bytes=101370920140
+...
+```
+
+`key=value` on stdout, human report on stderr. `state` is one of `syncing`, `blocked`,
+`unestablished`, `never`, `failed`, `stale`, `ok` — in that order of precedence.
+
 ## When it stops
 
 A two-way mirror sometimes needs a human, and `ferry` is built to stop rather than guess.
