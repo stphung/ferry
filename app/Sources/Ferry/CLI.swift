@@ -4,6 +4,20 @@
 import Foundation
 
 enum FerryCLI {
+    /// Spotlight/Finder launches carry a minimal PATH without Homebrew.
+    /// ferry augments its own PATH too, but every process this app spawns
+    /// gets the full one so no context can regress.
+    static func env() -> [String: String] {
+        var e = ProcessInfo.processInfo.environment
+        var path = e["PATH"] ?? "/usr/bin:/bin"
+        for extra in ["/opt/homebrew/bin", "/usr/local/bin", "\(NSHomeDirectory())/.local/bin"]
+        where !path.split(separator: ":").map(String.init).contains(extra) {
+            path += ":" + extra
+        }
+        e["PATH"] = path
+        return e
+    }
+
     /// FERRY_BIN wins (tests, development), then the usual install locations,
     /// then a login shell's PATH. Re-resolved per refresh so an install
     /// mid-session is picked up.
@@ -34,6 +48,7 @@ enum FerryCLI {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: bin)
         p.arguments = args
+        p.environment = env()
         let out = Pipe()
         p.standardOutput = out
         p.standardError = FileHandle.nullDevice
@@ -54,9 +69,9 @@ enum FerryCLI {
         p.executableURL = URL(fileURLWithPath: bin)
         p.arguments = args
         // NO_COLOR: the output window renders text, not ANSI escapes
-        var env = ProcessInfo.processInfo.environment
-        env["NO_COLOR"] = "1"
-        p.environment = env
+        var environment = env()
+        environment["NO_COLOR"] = "1"
+        p.environment = environment
         let pipe = Pipe()
         p.standardOutput = pipe
         p.standardError = pipe
@@ -110,6 +125,7 @@ extension FerryCLI {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: bin)
         p.arguments = args
+        p.environment = env()
         let inPipe = Pipe(), outPipe = Pipe(), errPipe = Pipe()
         p.standardInput = inPipe
         p.standardOutput = outPipe

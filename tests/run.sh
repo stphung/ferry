@@ -915,6 +915,22 @@ teardown
 }
 
 
+# 41. Spotlight/launchd launch context: a minimal PATH without Homebrew must
+#     still work — ferry augments its own PATH. This was a real bug: the app
+#     showed an error state from Spotlight, and the launchd schedule would
+#     have failed identically on its first firing.
+test_41_minimal_path_launch() {
+setup
+out=$(env -i HOME="$HOME" PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+    FERRY_CONFIG="$conf" FERRY_STATE_DIR="$state" \
+    "$FERRY" status --porcelain 2>"$work/err"); status=$?
+err=$(cat "$work/err")
+expect_status "41a status works under a minimal PATH" 0
+expect_contains "41b state is reported, not an rclone error" "state=" "$out"
+teardown
+}
+
+
 # ------------------------------------------------------------------ runner --
 
 all_tests=$(declare -F | awk '{print $3}' | grep '^test_[0-9]' | sort)

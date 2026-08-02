@@ -7,7 +7,20 @@
 
 set -eu
 
-VERSION=0.6.2
+VERSION=0.6.3
+
+# GUI and launchd contexts (Spotlight, Ferry.app, the scheduled sync) start
+# with a minimal PATH that lacks Homebrew — so rclone "isn't installed" and
+# everything downstream reports an error state. Augment PATH here, once, so
+# ferry behaves identically no matter what launched it.
+for _extra in /opt/homebrew/bin /usr/local/bin "$HOME/.local/bin"; do
+	case ":$PATH:" in
+		*":$_extra:"*) ;;
+		*) [ -d "$_extra" ] && PATH="$PATH:$_extra" ;;
+	esac
+done
+export PATH
+unset _extra
 
 # ---------------------------------------------------------------- defaults --
 #
