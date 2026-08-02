@@ -977,6 +977,39 @@ teardown
 }
 
 
+# 44. Filters: an excluded directory is invisible to resync and sync — the
+#     Personal Vault fix, generically
+test_44_filters() {
+setup
+filters="$work/filters"
+printf -- '- skip-me/**\n' > "$filters"
+seed 3
+mkdir -p "$p1/skip-me"
+printf 'should never cross\n' > "$p1/skip-me/secret.txt"
+
+run_f() {
+    out=$(FERRY_CONFIG="$conf" FERRY_STATE_DIR="$state" FERRY_FILTERS="$filters" \
+        "$FERRY" "$@" 2>"$work/err"); status=$?; err=$(cat "$work/err")
+}
+run_f markers --yes
+run_f resync --yes
+expect_status "44a resync succeeds with filters" 0
+expect_no_file "44b excluded dir did not cross" "$p2/skip-me"
+expect_file "44c other files did" "$p2/f2.txt"
+
+printf 'new on nas\n' > "$p1/skip-me/another.txt"
+printf 'regular\n' > "$p1/regular.txt"
+run_f sync
+expect_status "44d sync succeeds with filters" 0
+expect_no_file "44e excluded content still invisible" "$p2/skip-me"
+expect_file "44f regular file crossed" "$p2/regular.txt"
+
+run_f doctor --porcelain
+expect_contains "44g doctor reports the filters file" "filters" "$out"
+teardown
+}
+
+
 # ------------------------------------------------------------------ runner --
 
 all_tests=$(declare -F | awk '{print $3}' | grep '^test_[0-9]' | sort)

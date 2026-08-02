@@ -7,7 +7,7 @@
 
 set -eu
 
-VERSION=0.7.4
+VERSION=0.7.5
 
 # GUI and launchd contexts (Spotlight, Ferry.app, the scheduled sync) start
 # with a minimal PATH that lacks Homebrew — so rclone "isn't installed" and
@@ -47,6 +47,10 @@ CHECK_FILENAME=RCLONE_TEST
 
 CONFIG_FILE="${FERRY_CONFIG:-$HOME/.config/ferry/config}"
 STATE_DIR="${FERRY_STATE_DIR:-$HOME/.local/state/ferry}"
+# Optional rclone filter rules, one per line ("- Personal Vault/**"). Applied
+# to sync, resync and check when the file exists. bisync hashes this file:
+# EDITING IT REQUIRES A RESYNC, which ferry's blocked flow will walk you into.
+FILTERS_FILE="${FERRY_FILTERS:-$HOME/.config/ferry/filters}"
 
 # bisync's own default workdir lives under ~/Library/Caches, which macOS is
 # free to purge. Losing it silently costs a full --resync, so we keep our
@@ -815,6 +819,9 @@ cmd_sync() {
 		--log-file "$log" --log-level INFO \
 		--stats 30s --stats-one-line)
 
+	[ -f "$FILTERS_FILE" ] && args="$args
+--filters-file
+$FILTERS_FILE"
 	[ "$dry" = 1 ] && args="$args
 --dry-run"
 	[ "$verbose" = 1 ] && args="$args
@@ -1114,6 +1121,9 @@ cmd_doctor() {
 	dr_head "config"
 	if [ -f "$CONFIG_FILE" ]; then dr ok config "$CONFIG_FILE"
 	else dr info config "$CONFIG_FILE (absent — using defaults)"; fi
+	if [ -f "$FILTERS_FILE" ]; then
+		dr info filters "$FILTERS_FILE ($(grep -c . "$FILTERS_FILE" || true) rules)"
+	fi
 	dr info state "$STATE_DIR"
 
 	if ! configured; then
@@ -1196,7 +1206,11 @@ cmd_check() {
 	# shellcheck disable=SC2086,SC2046
 	set -- $(rclone_common)
 	IFS="$oldifs"
-	rclone check "$PATH1" "$PATH2" "$@"
+	if [ -f "$FILTERS_FILE" ]; then
+		rclone check "$PATH1" "$PATH2" --filter-from "$FILTERS_FILE" "$@"
+	else
+		rclone check "$PATH1" "$PATH2" "$@"
+	fi
 }
 
 # ------------------------------------------------------------------- resync --
@@ -1263,6 +1277,9 @@ cmd_resync() {
 		--create-empty-src-dirs \
 		--log-file "$log" --log-level INFO \
 		--stats 30s --stats-one-line)
+	[ -f "$FILTERS_FILE" ] && args="$args
+--filters-file
+$FILTERS_FILE"
 	[ "$dry" = 1 ] && args="$args
 --dry-run"
 
